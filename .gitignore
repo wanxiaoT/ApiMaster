@@ -1,0 +1,4 @@
+node_modules/
+_ref/
+.env
+.env.local

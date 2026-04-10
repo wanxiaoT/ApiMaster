@@ -1,0 +1,16 @@
+{
+  "name": "api-master",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "AI API 检测 + 大海捞针测试平台",
+  "scripts": {
+    "start": "node server/index.mjs",
+    "dev": "node server/index.mjs"
+  },
+  "dependencies": {
+    "html2canvas": "^1.4.1"
+  },
+  "devDependencies": {
+    "playwright": "^1.59.1"
+  }
+}

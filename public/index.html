@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ApiMaster - AI API 检测 & 大海捞针测试</title>
+  <meta name="description" content="AI API 中转站检测工具，支持自定义模型名，大海捞针上下文检索测试">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+
+<body>
+  <main class="shell">
+    <section class="panel hero">
+      <div class="hero-copy">
+        <div class="eyebrow" id="hero-eyebrow">AI API WORKBENCH</div>
+        <h1>ApiMaster</h1>
+        <p class="deck" id="page-copy">用于快速验证 AI API 是否真实兼容目标模型与返回协议，适合排查知识截止、thinking、usage 与 SSE 结构问题。</p>
+        <div class="hero-note" id="hero-note">纯前端 + 本地代理工作流。先进入一个工作区，再完成接口检测或长上下文测试；历史记录与进度状态都在各自功能区内展示。</div>
+      </div>
+
+      <div class="hero-rail">
+        <div class="rail-head">
+          <div class="system-badge" id="head-chip-tab">当前任务 · API 检测</div>
+          <button class="lang-btn" id="lang-toggle">EN</button>
+        </div>
+
+        <div class="entry-grid">
+          <button class="nav-tab entry-card active" data-tab="detect" id="tab-detect">
+            <span class="entry-kicker" id="entry-detect-kicker">接口兼容性检测</span>
+            <span class="entry-title" id="entry-detect-title">进入 API 检测</span>
+            <span class="entry-note" id="entry-detect-note">检查模型识别、知识截止、thinking、usage 与 SSE 返回结构。</span>
+            <span class="entry-meta" id="entry-detect-meta">适合排查中转站真实性与协议兼容性</span>
+          </button>
+
+          <button class="nav-tab entry-card" data-tab="needle" id="tab-needle">
+            <span class="entry-kicker" id="entry-needle-kicker">长上下文检索测试</span>
+            <span class="entry-title" id="entry-needle-title">进入 大海捞针 测试<br>（Neddle 测试）</span>
+            <span class="entry-note" id="entry-needle-note">基于上下文长度和插入深度矩阵，观察真实检索能力与衰减表现。</span>
+            <span class="entry-meta" id="entry-needle-meta">适合验证长上下文召回和热力图趋势</span>
+          </button>
+        </div>
+
+        <p class="rail-note" id="hero-rail-note">入口卡只负责切换任务；运行状态、历史记录和进度信息都保留在对应工作区里，避免首页被中控信息占满。</p>
+      </div>
+    </section>
+
+    <section class="panel notice-panel">
+      <div class="section-head compact-head">
+        <div>
+          <div class="kicker">Security Note</div>
+          <h2>使用提示</h2>
+        </div>
+        <div class="kicker">Read First</div>
+      </div>
+      <p class="info-copy" id="alert-text">为保障账户安全，建议优先使用测试专用 API Key。本工具纯前端 + 本地代理，不会主动上传或存储你的 API Key。</p>
+    </section>
+
+    <section class="page-view" id="page-detect">
+      <section class="metrics">
+        <article class="metric dark span-6">
+          <div class="metric-label">最近得分 / Last Score</div>
+          <div class="metric-value" id="detect-stat-last-score">--</div>
+          <div class="metric-foot" id="detect-note-last-score">完成一次检测后自动更新</div>
+        </article>
+
+        <article class="metric span-3">
+          <div class="metric-label">当前模式 / Current Mode</div>
+          <div class="metric-value metric-compact" id="detect-stat-mode">Anthropic</div>
+          <div class="metric-foot" id="detect-note-mode">/v1/messages · Thinking</div>
+        </article>
+
+        <article class="metric span-3">
+          <div class="metric-label">检测历史 / History</div>
+          <div class="metric-value metric-compact" id="detect-stat-history">0</div>
+          <div class="metric-foot" id="detect-note-history">尚无检测记录</div>
+        </article>
+
+        <article class="metric span-12">
+          <div class="metric-label">所选模型 / Selected Model</div>
+          <div class="metric-value metric-wide" id="detect-stat-model">未设置</div>
+          <div class="metric-foot" id="detect-note-model">选择预置模型或手动输入实际模型名</div>
+        </article>
+      </section>
+
+      <div class="content-grid">
+        <section class="panel panel-section content-span-full">
+          <div class="section-head">
+            <div>
+              <div class="kicker">Connection</div>
+              <h2 id="section-config-title">接口配置</h2>
+            </div>
+            <div class="kicker">Editable</div>
+          </div>
+
+          <div class="field-grid">
+            <label class="field field-input">
+              <span id="label-api-url">API 接口地址</span>
+              <div class="input-wrapper">
+                <svg class="input-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="2">
+                  <circle cx="11" cy="11" r="8" />
+                  <path d="M21 21l-4.35-4.35" />
+                </svg>
+                <input type="text" id="api-url" class="input" placeholder="https://example.com/v1/messages"
+                  autocomplete="off">
+                <div class="dropdown" id="provider-dropdown"></div>
+              </div>
+            </label>
+
+            <label class="field field-input">
+              <span id="label-api-key">API KEY</span>
+              <div class="input-wrapper">
+                <span class="input-icon-emoji">🔑</span>
+                <input type="password" id="api-key" class="input input-key" placeholder="sk-..." autocomplete="off">
+                <div class="input-actions">
+                  <button class="icon-btn" id="btn-toggle-key" title="显示/隐藏">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                      stroke-width="2">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                      <circle cx="12" cy="12" r="3" />
+                    </svg>
+                  </button>
+                  <button class="icon-btn" id="btn-clear-key" title="清除">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                      stroke-width="2">
+                      <path d="M18 6L6 18M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </label>
+          </div>
+        </section>
+
+        <div class="stack">
+          <section class="panel panel-section">
+            <div class="section-head">
+              <div>
+                <div class="kicker">Format + Model</div>
+                <h2 id="section-model-title">目标模型</h2>
+              </div>
+              <div class="kicker" id="section-mode-title">检测方式</div>
+            </div>
+
+            <div class="mode-selector mode-selector-inline">
+              <button class="mode-btn active" data-mode="anthropic" id="mode-anthropic">
+                <div class="mode-name">Anthropic 格式</div>
+                <div class="mode-desc">/v1/messages · 流式 + thinking</div>
+              </button>
+              <button class="mode-btn" data-mode="openai" id="mode-openai">
+                <div class="mode-name">OpenAI 格式</div>
+                <div class="mode-desc">/v1/chat/completions</div>
+              </button>
+            </div>
+
+            <label class="field field-input single-field">
+              <span id="label-detect-request-type">调用方式</span>
+              <select id="detect-request-type" class="input select plain-input">
+                <option value="nonstream" id="option-detect-nonstream">非流式调用</option>
+                <option value="stream" id="option-detect-stream">流式调用</option>
+              </select>
+            </label>
+
+            <div class="model-grid" id="model-grid"></div>
+
+            <div class="field single-field">
+              <span id="label-model-id">实际模型名（可自定义修改）</span>
+              <div class="input-wrapper">
+                <svg class="input-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="2">
+                  <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
+                  <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
+                </svg>
+                <input type="text" id="model-id" class="input" placeholder="claude-sonnet-4-6">
+              </div>
+              <div class="info-copy" id="model-hint">💡 中转站可能需要修改模型名，例如添加前缀 <code>[特价]-</code> 或后缀
+                <code>-no-thinking</code></div>
+            </div>
+
+            <div class="note-band thinking-toggle" id="thinking-toggle-wrap">
+              <label class="toggle-label">
+                <input type="checkbox" id="with-thinking" checked>
+                <span class="toggle-slider"></span>
+                <span id="label-thinking">启用 Thinking (Extended Thinking)</span>
+              </label>
+            </div>
+          </section>
+        </div>
+
+        <div class="stack">
+          <section class="panel panel-section">
+            <div class="section-head">
+              <div>
+                <div class="kicker">Run</div>
+                <h2>开始检测</h2>
+              </div>
+              <div class="kicker">Execute</div>
+            </div>
+            <ul class="list compact-list">
+              <li>先选接口地址、认证方式与目标模型，再执行真实请求。</li>
+              <li>Anthropic 模式会检查知识截止、SSE、thinking 与 usage；OpenAI 模式会检查响应结构、finish_reason、stream、tools 与 Structured Outputs。</li>
+              <li>检测完成后可直接在下方查看原始响应、历史记录、来源 / 画像判定与指标。</li>
+            </ul>
+            <div class="actions" style="margin-top:16px">
+              <button class="btn-primary" id="btn-detect">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polygon points="5 3 19 12 5 21 5 3" />
+                </svg>
+                <span id="btn-detect-text">开始检测</span>
+              </button>
+              <button class="btn-text" id="btn-detect-scan">
+                <span id="btn-detect-scan-text">扫描常见模型</span>
+              </button>
+            </div>
+            <div class="note-band" id="detect-run-note">Anthropic 模式下会额外给出三源来源判定、证据面板与 ratelimit
+              动态验证；扫描常见模型可用于判断是否存在混合渠道。</div>
+          </section>
+
+          <section class="panel panel-section quick-facts">
+            <div class="section-head">
+              <div>
+                <div class="kicker">Snapshot</div>
+                <h2>当前摘要</h2>
+              </div>
+              <div class="kicker">Readonly</div>
+            </div>
+            <div class="path-list">
+              <div class="path-row">
+                <div class="label">当前页面</div>
+                <code>API Detect</code>
+              </div>
+              <div class="path-row">
+                <div class="label">检测状态</div>
+                <code id="result-status-inline">待开始</code>
+              </div>
+              <div class="path-row">
+                <div class="label">最近接口</div>
+                <code id="result-endpoint-inline">--</code>
+              </div>
+              <div class="path-row">
+                <div class="label">最近模型</div>
+                <code id="result-model-inline">--</code>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <section class="panel panel-section result-card hidden" id="result-section">
+        <div class="section-head">
+          <div>
+            <div class="kicker">Detection Result</div>
+            <h2 id="result-title">检测结果</h2>
+          </div>
+          <div class="section-copy" id="result-summary-copy">系统将根据响应结构、finish_reason、stream / usage、tools、Structured Outputs 与画像证据生成综合判断。</div>
+        </div>
+
+        <div class="actions result-actions">
+          <button class="btn-text" id="btn-copy-detect-result" disabled>复制结果</button>
+          <button class="btn-text" id="btn-save-detect-result" disabled>保存 JSON</button>
+          <button class="btn-text" id="btn-copy-detect-shot" disabled>复制截图</button>
+          <button class="btn-text" id="btn-save-detect-shot" disabled>保存截图 PNG</button>
+        </div>
+
+        <div class="result-shell">
+          <div class="result-overview">
+            <div class="score-gauge" id="score-gauge">
+              <svg width="200" height="200" viewBox="0 0 200 200">
+                <circle cx="100" cy="100" r="80" fill="none" stroke="#e5e5e5" stroke-width="12" />
+                <circle id="score-circle" cx="100" cy="100" r="80" fill="none" stroke="#111111" stroke-width="12"
+                  stroke-linecap="round" stroke-dasharray="502.65" stroke-dashoffset="502.65"
+                  transform="rotate(-90 100 100)" />
+                <text x="100" y="92" text-anchor="middle" class="score-text" id="score-text">0%</text>
+                <text x="100" y="118" text-anchor="middle" class="score-label" id="score-label">检测中...</text>
+              </svg>
+            </div>
+
+            <div class="path-list compact-paths">
+              <div class="path-row">
+                <div class="label">兼容性等级</div>
+                <code id="result-status-text">等待检测</code>
+              </div>
+              <div class="path-row">
+                <div class="label">模型</div>
+                <code id="result-model-text">--</code>
+              </div>
+              <div class="path-row">
+                <div class="label">接口</div>
+                <code id="result-endpoint-text">--</code>
+              </div>
+            </div>
+          </div>
+
+          <div class="result-detail">
+            <section class="result-subpanel">
+              <div class="section-head mini-head">
+                <div>
+                  <div class="kicker">Checklist</div>
+                  <h2>检查项</h2>
+                </div>
+              </div>
+              <div class="check-list" id="check-list"></div>
+            </section>
+
+            <section class="result-subpanel">
+              <div class="section-head mini-head">
+                <div>
+                  <div class="kicker">Metrics</div>
+                  <h2>性能指标</h2>
+                </div>
+              </div>
+              <div class="metrics-inline" id="metrics"></div>
+            </section>
+
+            <section class="result-subpanel">
+              <div class="section-head mini-head">
+                <div>
+                  <div class="kicker">Source Verdict</div>
+                  <h2 id="source-title">来源判定</h2>
+                </div>
+              </div>
+              <div class="source-summary-grid" id="source-summary-grid">
+                <div class="source-card">
+                  <div class="metric-label">判定结果</div>
+                  <div class="source-badge unknown" id="source-verdict-badge">待检测</div>
+                </div>
+                <div class="source-card">
+                  <div class="metric-label">置信度</div>
+                  <div class="source-value" id="source-confidence-text">--</div>
+                </div>
+                <div class="source-card">
+                  <div class="metric-label">平台线索</div>
+                  <div class="source-value" id="source-platform-text">--</div>
+                </div>
+                <div class="source-card">
+                  <div class="metric-label">Ratelimit</div>
+                  <div class="source-value" id="source-ratelimit-text">--</div>
+                </div>
+              </div>
+              <div class="path-list compact-paths source-facts">
+                <div class="path-row">
+                  <div class="label" id="source-tool-label">tool_use 指纹</div>
+                  <code id="source-tool-text">--</code>
+                </div>
+                <div class="path-row">
+                  <div class="label" id="source-msg-label">message id 指纹</div>
+                  <code id="source-msg-text">--</code>
+                </div>
+                <div class="path-row">
+                  <div class="label" id="source-thinking-label">thinking 指纹</div>
+                  <code id="source-thinking-text">--</code>
+                </div>
+              </div>
+            </section>
+
+            <section class="result-subpanel">
+              <div class="section-head mini-head">
+                <div>
+                  <div class="kicker">Evidence</div>
+                  <h2 id="source-evidence-title">证据面板</h2>
+                </div>
+              </div>
+              <div class="evidence-list" id="source-evidence-list">
+                <div class="history-empty">检测完成后展示来源证据</div>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <div class="note-band response-preview">
+          <button class="collapse-btn" id="btn-toggle-response">
+            <span id="toggle-response-text">显示响应内容</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+          <pre class="response-content hidden" id="response-content"></pre>
+        </div>
+      </section>
+
+      <section class="panel panel-section hidden" id="scan-section">
+        <div class="section-head">
+          <div>
+            <div class="kicker">Model Scan</div>
+            <h2 id="scan-title">多模型来源扫描</h2>
+          </div>
+          <div class="section-copy" id="scan-summary-copy">扫描常见模型后，可快速判断同一中转站是否存在混合渠道。</div>
+        </div>
+
+        <div class="note-band" id="scan-note">扫描结果会按模型展示来源判定、置信度、延迟和 ratelimit 验证情况。</div>
+
+        <div class="needle-results-table-wrap">
+          <table class="needle-results-table" id="scan-results-table">
+            <thead>
+              <tr>
+                <th>模型</th>
+                <th>来源判定</th>
+                <th>置信度</th>
+                <th>平均延迟</th>
+                <th>Ratelimit</th>
+                <th>摘要</th>
+              </tr>
+            </thead>
+            <tbody id="scan-results-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel panel-section" id="history-section">
+        <div class="section-head">
+          <div>
+            <div class="kicker">Recent Runs</div>
+            <h2 id="history-title">最近历史</h2>
+          </div>
+          <div class="actions actions-inline">
+            <div class="kicker">Keep latest 50</div>
+            <button class="btn-text" id="btn-clear-history">清除缓存</button>
+          </div>
+        </div>
+        <div class="history-list" id="history-list">
+          <div class="history-empty" id="history-empty">暂无检测记录</div>
+        </div>
+      </section>
+    </section>
+
+    <section class="page-view hidden" id="page-needle">
+      <section class="metrics">
+        <article class="metric dark span-6">
+          <div class="metric-label">测试模型 / Test Model</div>
+          <div class="metric-value metric-wide" id="needle-stat-model">未设置</div>
+          <div class="metric-foot" id="needle-note-model">默认可继承检测页的模型与接口配置</div>
+        </article>
+
+        <article class="metric span-3">
+          <div class="metric-label">测试矩阵 / Matrix</div>
+          <div class="metric-value metric-compact" id="needle-stat-matrix">0 × 0</div>
+          <div class="metric-foot" id="needle-note-matrix">根据上下文长度与深度间隔自动生成</div>
+        </article>
+
+        <article class="metric span-3">
+          <div class="metric-label">上下文范围 / Context</div>
+          <div class="metric-value metric-compact" id="needle-stat-context">1000 → 8000</div>
+          <div class="metric-foot" id="needle-note-context">tokens</div>
+        </article>
+
+        <article class="metric span-12">
+          <div class="metric-label">插入深度 / Needle Depth</div>
+          <div class="metric-value metric-wide" id="needle-stat-depth">0% → 100%</div>
+          <div class="metric-foot" id="needle-note-depth">用于观察长上下文检索退化</div>
+        </article>
+      </section>
+
+      <div class="content-grid">
+        <div class="stack">
+          <section class="panel panel-section">
+            <div class="section-head">
+              <div>
+                <div class="kicker">Connection</div>
+                <h2>接口配置</h2>
+              </div>
+              <div class="kicker">Editable</div>
+            </div>
+
+            <div class="field-grid">
+              <label class="field field-input">
+                <span>API 接口地址</span>
+                <div class="input-wrapper">
+                  <svg class="input-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2">
+                    <circle cx="11" cy="11" r="8" />
+                    <path d="M21 21l-4.35-4.35" />
+                  </svg>
+                  <input type="text" id="needle-api-url" class="input"
+                    placeholder="https://example.com/v1/chat/completions" autocomplete="off">
+                </div>
+              </label>
+
+              <label class="field field-input">
+                <span>API KEY</span>
+                <div class="input-wrapper">
+                  <span class="input-icon-emoji">🔑</span>
+                  <input type="password" id="needle-api-key" class="input" placeholder="sk-..." autocomplete="off">
+                </div>
+              </label>
+            </div>
+
+            <div class="field-grid compact-grid triple-grid needle-top-grid">
+              <label class="field field-input">
+                <span>模型名</span>
+                <input type="text" id="needle-model" class="input plain-input" placeholder="claude-sonnet-4-6"
+                  autocomplete="off">
+              </label>
+
+              <label class="field field-input">
+                <span>格式</span>
+                <select id="needle-mode" class="input select plain-input">
+                  <option value="openai">OpenAI 格式</option>
+                  <option value="anthropic">Anthropic 格式</option>
+                </select>
+              </label>
+
+              <label class="field field-input">
+                <span id="label-needle-request-type">调用方式</span>
+                <select id="needle-request-type" class="input select plain-input">
+                  <option value="nonstream" id="option-needle-nonstream">非流式调用</option>
+                  <option value="stream" id="option-needle-stream">流式调用</option>
+                </select>
+              </label>
+            </div>
+          </section>
+
+          <section class="panel panel-section">
+            <div class="section-head">
+              <div>
+                <div class="kicker">Prompt Matrix</div>
+                <h2>测试参数</h2>
+              </div>
+              <div class="kicker">Editable</div>
+            </div>
+
+            <label class="field field-input single-field">
+              <span>Needle（要隐藏的关键信息）</span>
+              <textarea id="needle-text" class="input textarea plain-textarea" rows="3"
+                placeholder="The best thing to do in San Francisco is eat a sandwich and sit in Dolores Park on a sunny day."></textarea>
+            </label>
+
+            <label class="field field-input single-field">
+              <span>检索问题</span>
+              <input type="text" id="needle-question" class="input plain-input"
+                placeholder="What is the best thing to do in San Francisco?" autocomplete="off">
+            </label>
+
+            <div class="field-grid compact-grid triple-grid">
+              <label class="field field-input">
+                <span>最小上下文长度 (tokens)</span>
+                <input type="number" id="needle-ctx-min" class="input plain-input" value="1000">
+              </label>
+              <label class="field field-input">
+                <span>最大上下文长度 (tokens)</span>
+                <input type="number" id="needle-ctx-max" class="input plain-input" value="8000">
+              </label>
+              <label class="field field-input">
+                <span>长度间隔数</span>
+                <input type="number" id="needle-ctx-intervals" class="input plain-input" value="5">
+              </label>
+            </div>
+
+            <div class="field-grid compact-grid triple-grid">
+              <label class="field field-input">
+                <span>最小深度 (%)</span>
+                <input type="number" id="needle-depth-min" class="input plain-input" value="0">
+              </label>
+              <label class="field field-input">
+                <span>最大深度 (%)</span>
+                <input type="number" id="needle-depth-max" class="input plain-input" value="100">
+              </label>
+              <label class="field field-input">
+                <span>深度间隔数</span>
+                <input type="number" id="needle-depth-intervals" class="input plain-input" value="5">
+              </label>
+            </div>
+          </section>
+        </div>
+
+        <div class="stack">
+          <section class="panel panel-section">
+            <div class="section-head">
+              <div>
+                <div class="kicker">Run</div>
+                <h2>开始测试</h2>
+              </div>
+              <div class="kicker">Execute</div>
+            </div>
+            <ul class="list compact-list">
+              <li>系统会生成“上下文长度 × 插入深度”的测试矩阵。</li>
+              <li>每一组都会向目标接口发送一次真实请求，并统计检索得分与延迟。</li>
+              <li>热力图越靠近深色，代表该位置下的检索能力越强。</li>
+            </ul>
+            <div class="note-band" id="needle-preset-note" style="margin-top:16px">
+              GPT-5.4 验真预设会自动填入 OpenAI / gpt-5.4 / 128k→256k / 深度 10%-90% 的复核矩阵。
+            </div>
+            <div class="actions" style="margin-top:16px">
+              <button class="btn-primary" id="btn-needle-start">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polygon points="5 3 19 12 5 21 5 3" />
+                </svg>
+                <span id="btn-needle-start-text">开始测试</span>
+              </button>
+              <button class="btn-text" id="btn-needle-gpt54-preset">应用 GPT-5.4 验真预设</button>
+              <button class="btn-text" id="btn-needle-stop" disabled>停止测试</button>
+            </div>
+          </section>
+
+          <section class="panel panel-section hidden" id="needle-progress-section">
+            <div class="section-head">
+              <div>
+                <div class="kicker">Progress</div>
+                <h2>测试进度</h2>
+              </div>
+              <div class="kicker">Live</div>
+            </div>
+            <div class="progress-bar-wrap">
+              <div class="progress-bar" id="needle-progress-bar">
+                <div class="progress-fill"></div>
+              </div>
+              <span class="progress-text" id="needle-progress-text">0 / 0</span>
+            </div>
+            <div class="note-band">
+              <div class="info-copy" id="needle-status"></div>
+            </div>
+          </section>
+
+          <section class="panel panel-section quick-facts">
+            <div class="section-head">
+              <div>
+                <div class="kicker">Summary</div>
+                <h2>测试说明</h2>
+              </div>
+              <div class="kicker">Readonly</div>
+            </div>
+            <div class="path-list">
+              <div class="path-row">
+                <div class="label">当前页面</div>
+                <code>Needle Test</code>
+              </div>
+              <div class="path-row">
+                <div class="label">热力图说明</div>
+                <code>0% → 100% 检索命中率</code>
+              </div>
+              <div class="path-row">
+                <div class="label">用途</div>
+                <code>观察长上下文检索衰减</code>
+              </div>
+              <div class="path-row">
+                <div class="label" id="needle-preset-label">推荐预设</div>
+                <code id="needle-preset-text">手动矩阵</code>
+              </div>
+              <div class="path-row">
+                <div class="label" id="needle-auth-label">验真复核</div>
+                <code id="needle-auth-text">尚未运行</code>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <section class="panel panel-section hidden" id="needle-result-section">
+        <div class="section-head">
+          <div>
+            <div class="kicker">Heatmap</div>
+            <h2>测试结果热力图</h2>
+          </div>
+          <div class="section-copy" id="needle-result-summary">灰度越深，代表该上下文长度与深度位置下的检索得分越高。</div>
+        </div>
+
+        <div class="heatmap-wrap">
+          <canvas id="heatmap-canvas" width="800" height="500"></canvas>
+        </div>
+        <div class="heatmap-legend">
+          <span class="legend-label">0%</span>
+          <div class="legend-gradient"></div>
+          <span class="legend-label">100%</span>
+        </div>
+        <div class="actions heatmap-actions">
+          <button class="btn-text" id="btn-export-heatmap">导出热力图 PNG</button>
+          <button class="btn-text" id="btn-export-needle-csv">导出结果 CSV</button>
+        </div>
+
+        <div class="needle-results-table-wrap">
+          <table class="needle-results-table" id="needle-results-table">
+            <thead>
+              <tr>
+                <th>上下文长度</th>
+                <th>深度 (%)</th>
+                <th>检索得分</th>
+                <th>延迟 (ms)</th>
+                <th>状态</th>
+              </tr>
+            </thead>
+            <tbody id="needle-results-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <footer class="footer">
+      <div>APIMASTER · AI API 检测与长上下文测试工作台</div>
+      <div class="footer-subline">By wanxiaoT</div>
+    </footer>
+  </main>
+
+  <script src="/js/models.js"></script>
+  <script src="/vendor/html2canvas.min.js"></script>
+  <script src="/js/utils.js"></script>
+  <script src="/js/api-detect.js"></script>
+  <script src="/js/needle-test.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+
+</html>
