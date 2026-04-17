@@ -5,7 +5,7 @@ const ApiDetect = (() => {
   let isScanRunning = false;
   let latestDetectExport = null;
   let activeHistoryEntryId = '';
-  const DEFAULT_MODEL_ID = 'claude-opus-4-6';
+  const DEFAULT_MODEL_ID = 'claude-opus-4-7';
   const REQUEST_TYPE_DEFAULTS = {
     anthropic: 'stream',
     openai: 'nonstream',
@@ -316,16 +316,31 @@ const ApiDetect = (() => {
       const customModels = loadConfig('customModels', []);
       const allModels = [...PRESET_MODELS, ...customModels];
       const selectedModelId = loadConfig('selectedModelId', '');
+      const fallbackIdx = Math.max(0, PRESET_MODELS.findIndex((item) => item.id === DEFAULT_MODEL_ID));
 
       if (selectedModelId) {
         const matchedIdx = allModels.findIndex((item) => item.id === selectedModelId);
         if (matchedIdx >= 0) {
           selectedIdx = matchedIdx;
+        } else {
+          selectedIdx = fallbackIdx;
+          if (allModels[selectedIdx]) {
+            saveConfig('selectedModel', selectedIdx);
+            saveConfig('selectedModelId', allModels[selectedIdx].id);
+          }
+        }
+      }
+
+      if (selectedIdx < 0 || selectedIdx >= allModels.length) {
+        selectedIdx = Math.min(fallbackIdx, Math.max(0, allModels.length - 1));
+        if (allModels[selectedIdx]) {
+          saveConfig('selectedModel', selectedIdx);
+          saveConfig('selectedModelId', allModels[selectedIdx].id);
         }
       }
 
       grid.innerHTML = allModels.map((m, i) => `
-        <button class="model-card ${i === selectedIdx ? 'active' : ''}" data-idx="${i}" data-id="${m.id}" data-mode="${m.mode || 'openai'}">
+        <button class="model-card ${i === selectedIdx ? 'active' : ''}" data-idx="${i}" data-id="${m.id}">
           <div class="model-card-check">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
           </div>
@@ -342,7 +357,6 @@ const ApiDetect = (() => {
       if (selectedIdx < allModels.length) {
         const savedCustomId = loadConfig('customModelId', '');
         modelInput.value = savedCustomId || allModels[selectedIdx].id;
-        setMode(allModels[selectedIdx].mode || 'openai');
       }
 
       grid.querySelectorAll('.model-card:not(.add-card)').forEach((card) => {
@@ -352,7 +366,6 @@ const ApiDetect = (() => {
           saveConfig('selectedModelId', card.dataset.id);
           modelInput.value = card.dataset.id;
           saveConfig('customModelId', '');
-          setMode(card.dataset.mode);
           render();
         });
       });
@@ -364,9 +377,8 @@ const ApiDetect = (() => {
           if (!name) return;
           const id = prompt('模型ID (实际发送的名称):', '');
           if (!id) return;
-          const mode = prompt('格式 (openai 或 anthropic):', 'openai');
           const customs = loadConfig('customModels', []);
-          customs.push({ name, id, provider: '自定义', mode: mode || 'openai' });
+          customs.push({ name, id, provider: '自定义' });
           saveConfig('customModels', customs);
           selectedIdx = PRESET_MODELS.length + customs.length - 1;
           saveConfig('selectedModel', selectedIdx);
@@ -779,14 +791,12 @@ const ApiDetect = (() => {
     return resp.json();
   }
 
-  function collectScanModelIds(mode) {
+  function collectScanModelIds() {
     const presetIds = PRESET_MODELS
-      .filter((item) => (item.mode || 'openai') === mode)
       .map((item) => String(item.id || '').trim())
       .filter(Boolean);
 
     const customIds = loadConfig('customModels', [])
-      .filter((item) => String(item?.mode || 'openai') === mode)
       .map((item) => String(item?.id || '').trim())
       .filter(Boolean);
 
@@ -800,7 +810,7 @@ const ApiDetect = (() => {
     const apiKey = document.getElementById('api-key').value.trim();
     const mode = getActiveMode();
     const requestType = document.getElementById('detect-request-type')?.value === 'stream' ? 'stream' : 'nonstream';
-    const modelIds = collectScanModelIds(mode);
+    const modelIds = collectScanModelIds();
 
     if (!apiUrl) {
       alert(getUiLang() === 'en' ? 'Please enter the API endpoint' : '请输入 API 接口地址');
