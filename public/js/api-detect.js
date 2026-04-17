@@ -463,6 +463,9 @@ const ApiDetect = (() => {
   }
 
   function getRequestTypeForMode(mode) {
+    if (mode === 'anthropic') {
+      return REQUEST_TYPE_DEFAULTS.anthropic || 'stream';
+    }
     const requestTypeMap = loadConfig('detectRequestTypeMap', {});
     return requestTypeMap?.[mode] || REQUEST_TYPE_DEFAULTS[mode] || 'nonstream';
   }
