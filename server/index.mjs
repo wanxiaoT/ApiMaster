@@ -10,7 +10,7 @@ const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, "..");
 const publicDir = path.join(rootDir, "public");
 
-const port = Number(process.env.PORT || 6722);
+const port = Number(process.env.PORT || 8183);
 const host = process.env.HOST || "0.0.0.0";
 const defaultFetchTimeoutMs = Number(process.env.APIMASTER_FETCH_TIMEOUT_MS || 45000);
 const probeFetchTimeoutMs = Number(process.env.APIMASTER_PROBE_TIMEOUT_MS || 15000);
@@ -79,7 +79,7 @@ async function fetchWithTimeout(url, options = {}, { timeoutMs = defaultFetchTim
   const onUpstreamAbort = () => {
     try {
       controller.abort();
-    } catch {}
+    } catch { }
   };
 
   if (upstreamSignal?.aborted) {
@@ -92,7 +92,7 @@ async function fetchWithTimeout(url, options = {}, { timeoutMs = defaultFetchTim
     timeoutTriggered = true;
     try {
       controller.abort();
-    } catch {}
+    } catch { }
   }, effectiveTimeoutMs);
 
   try {
@@ -173,7 +173,7 @@ function getOpenAITokenizerAdapter(modelId = "") {
       encodingForModel(normalizedModelId);
       tokenizerLabel = `OpenAI / ${normalizedModelId} (${mappedEncodingName})`;
     }
-  } catch {}
+  } catch { }
 
   const encoder = getEncoding(mappedEncodingName);
 
@@ -1062,9 +1062,9 @@ function scoreSseShape(meta) {
   if (contentTypes.some((t) => t === "text")) score += 2;
 
   const known = new Set([
-    "ping","message_start","content_block_start",
-    "content_block_delta","content_block_stop",
-    "message_delta","message_stop",
+    "ping", "message_start", "content_block_start",
+    "content_block_delta", "content_block_stop",
+    "message_delta", "message_stop",
   ]);
   const unknown = types.filter((t) => !known.has(t));
   if (unknown.length) {
@@ -1647,12 +1647,12 @@ function buildOpenAIDetectBreakdown({
 
   const total = Math.max(0, Math.min(100,
     responseShape.score
-      + finishReason.score
-      + streamProtocol.score
-      + usageScore.score
-      + modelEcho.score
-      + toolsScore.score
-      + structuredScore.score
+    + finishReason.score
+    + streamProtocol.score
+    + usageScore.score
+    + modelEcho.score
+    + toolsScore.score
+    + structuredScore.score
   ));
 
   return {
@@ -1754,24 +1754,24 @@ function buildDetectResultPayload({
 }) {
   const scoring = isAnthropic
     ? buildAnthropicDetectBreakdown({
-        useStream,
-        responseText,
-        sseMeta,
-        usage,
-        signatureDeltaTotalLength,
-        signatureDeltaCount,
-        withThinking,
-      })
+      useStream,
+      responseText,
+      sseMeta,
+      usage,
+      signatureDeltaTotalLength,
+      signatureDeltaCount,
+      withThinking,
+    })
     : buildOpenAIDetectBreakdown({
-        responseText,
-        usage,
-        firstChunkLatencyMs,
-        requestType,
-        requestedModelId,
-        responseModel,
-        sourceAnalysis,
-        openaiResponseMeta,
-      });
+      responseText,
+      usage,
+      firstChunkLatencyMs,
+      requestType,
+      requestedModelId,
+      responseModel,
+      sourceAnalysis,
+      openaiResponseMeta,
+    });
 
   return {
     ok: true,
@@ -3149,11 +3149,11 @@ async function detectSourceAnalysis({ apiUrl, apiKey, modelId, mode, requestType
   const ratelimitCheck = hasPossibleRatelimit
     ? await verifyAnthropicRatelimitDynamic({ apiUrl, apiKey, modelId, requestType, shots: 3 })
     : {
-        verdict: "unavailable",
-        label: "未发现",
-        detail: "未检测到可验证的 ratelimit 头",
-        samples: [],
-      };
+      verdict: "unavailable",
+      label: "未发现",
+      detail: "未检测到可验证的 ratelimit 头",
+      samples: [],
+    };
 
   return analyzeAnthropicSource({
     modelId,
@@ -3198,18 +3198,18 @@ async function runDetectScan({ apiUrl, apiKey, mode, requestType, modelIds }) {
     isMixed: verdictSet.size > 1,
     summaryText: mode !== "anthropic"
       ? (() => {
-          const supportedCount = results.filter((item) => item.sourceAnalysis?.supported).length;
-          const positiveCount = results.filter((item) =>
-            item.sourceAnalysis?.verdict === "authentic" || item.sourceAnalysis?.verdict === "likely"
-          ).length;
-          if (supportedCount === 0) {
-            return "OpenAI 模式下当前仅对 gpt-5.4 主模型 / 快照执行接口画像探针。";
-          }
-          if (positiveCount > 0) {
-            return `已完成 ${supportedCount} 组 gpt-5.4 接口画像探针，请重点查看参数兼容、结构化输出与代理线索。`;
-          }
-          return `已完成 ${supportedCount} 组 gpt-5.4 接口画像探针，但暂无明显“原生直连 / 官方上游代理”结果。`;
-        })()
+        const supportedCount = results.filter((item) => item.sourceAnalysis?.supported).length;
+        const positiveCount = results.filter((item) =>
+          item.sourceAnalysis?.verdict === "authentic" || item.sourceAnalysis?.verdict === "likely"
+        ).length;
+        if (supportedCount === 0) {
+          return "OpenAI 模式下当前仅对 gpt-5.4 主模型 / 快照执行接口画像探针。";
+        }
+        if (positiveCount > 0) {
+          return `已完成 ${supportedCount} 组 gpt-5.4 接口画像探针，请重点查看参数兼容、结构化输出与代理线索。`;
+        }
+        return `已完成 ${supportedCount} 组 gpt-5.4 接口画像探针，但暂无明显“原生直连 / 官方上游代理”结果。`;
+      })()
       : verdictSet.size > 1
         ? "扫描结果显示同一站点的不同模型存在混合渠道。"
         : "扫描结果未发现明显的多后端混合渠道。",
@@ -3272,8 +3272,8 @@ async function handleProbe(req, res) {
       const mergeUsage = (source) => {
         if (!source || typeof source !== "object") return;
         for (const key of [
-          "input_tokens","output_tokens","cache_read_input_tokens",
-          "cache_creation_input_tokens","total_tokens","prompt_tokens","completion_tokens",
+          "input_tokens", "output_tokens", "cache_read_input_tokens",
+          "cache_creation_input_tokens", "total_tokens", "prompt_tokens", "completion_tokens",
         ]) {
           const value = source[key];
           if (typeof value === "number") usage[key] = value;
@@ -3375,7 +3375,7 @@ async function handleProbe(req, res) {
       try {
         const pb = JSON.parse(bodyText);
         if (pb?.usage && typeof pb.usage === "object") upstreamUsage = pb.usage;
-      } catch {}
+      } catch { }
     }
 
     const payload = {
