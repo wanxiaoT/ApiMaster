@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
+import { getTokenizer as getAnthropicTokenizer } from "@anthropic-ai/tokenizer";
+import { encodingForModel, getEncoding } from "js-tiktoken";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -10,6 +12,9 @@ const publicDir = path.join(rootDir, "public");
 
 const port = Number(process.env.PORT || 6722);
 const host = process.env.HOST || "0.0.0.0";
+const defaultFetchTimeoutMs = Number(process.env.APIMASTER_FETCH_TIMEOUT_MS || 45000);
+const probeFetchTimeoutMs = Number(process.env.APIMASTER_PROBE_TIMEOUT_MS || 15000);
+const haystackCharsPerTokenEstimate = Math.max(1, Number(process.env.APIMASTER_CHARS_PER_TOKEN || 4) || 4);
 
 const contentTypes = {
   ".css": "text/css; charset=utf-8",
@@ -24,7 +29,465 @@ const contentTypes = {
   ".woff2": "font/woff2",
 };
 
+const utf8Decoder = new TextDecoder();
+const openAiTokenizerCache = new Map();
+let anthropicTokenizerAdapter = null;
+
+const haystackCorpusCache = {
+  loaded: false,
+  fileCount: 0,
+  text: "",
+  totalChars: 0,
+  estimatedTokens: 0,
+  tokensByTokenizer: new Map(),
+};
+
 /* ── helpers ─────────────────────────────────── */
+
+function estimateTokensFromChars(charCount = 0) {
+  if (!Number.isFinite(charCount) || charCount <= 0) return 0;
+  return Math.max(0, Math.round(charCount / haystackCharsPerTokenEstimate));
+}
+
+function getProbeTimeoutMs({ useStream = false } = {}) {
+  return useStream ? Math.max(probeFetchTimeoutMs, 30000) : probeFetchTimeoutMs;
+}
+
+function getDetectTimeoutMs({ isAnthropic = false, useStream = false, withThinking = false } = {}) {
+  let timeoutMs = useStream ? Math.max(defaultFetchTimeoutMs, 75000) : defaultFetchTimeoutMs;
+  if (isAnthropic && withThinking !== false) {
+    timeoutMs += 30000;
+  }
+  return timeoutMs;
+}
+
+function getNeedleTimeoutMs({ requestType = "nonstream", contextLength = 0 } = {}) {
+  const normalizedContextLength = Math.max(0, Number(contextLength) || 0);
+  const baseTimeoutMs = requestType === "stream" ? 90000 : 60000;
+  const scaledTimeoutMs = baseTimeoutMs + Math.min(90000, normalizedContextLength * 1.5);
+  return Math.max(baseTimeoutMs, Math.round(scaledTimeoutMs));
+}
+
+async function fetchWithTimeout(url, options = {}, { timeoutMs = defaultFetchTimeoutMs, label = "upstream_request" } = {}) {
+  const effectiveTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0
+    ? timeoutMs
+    : defaultFetchTimeoutMs;
+  const controller = new AbortController();
+  const { signal: upstreamSignal, ...fetchOptions } = options || {};
+  let timeoutTriggered = false;
+
+  const onUpstreamAbort = () => {
+    try {
+      controller.abort();
+    } catch {}
+  };
+
+  if (upstreamSignal?.aborted) {
+    onUpstreamAbort();
+  } else if (upstreamSignal?.addEventListener) {
+    upstreamSignal.addEventListener("abort", onUpstreamAbort, { once: true });
+  }
+
+  const timeoutId = setTimeout(() => {
+    timeoutTriggered = true;
+    try {
+      controller.abort();
+    } catch {}
+  }, effectiveTimeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...fetchOptions,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (timeoutTriggered || (error?.name === "AbortError" && controller.signal.aborted && !upstreamSignal?.aborted)) {
+      const timeoutError = new Error(`${label}_timeout_${effectiveTimeoutMs}ms`);
+      timeoutError.code = "upstream_timeout";
+      timeoutError.cause = error;
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+    if (upstreamSignal?.removeEventListener) {
+      upstreamSignal.removeEventListener("abort", onUpstreamAbort);
+    }
+  }
+}
+
+function loadHaystackCorpus() {
+  if (haystackCorpusCache.loaded) {
+    return haystackCorpusCache.text ? haystackCorpusCache : null;
+  }
+
+  const haystackDir = path.join(publicDir, "data", "haystack");
+  if (!fs.existsSync(haystackDir)) {
+    haystackCorpusCache.loaded = true;
+    return null;
+  }
+
+  const files = fs.readdirSync(haystackDir)
+    .filter((fileName) => fileName.endsWith(".txt"))
+    .sort();
+  let corpusText = "";
+
+  for (const fileName of files) {
+    corpusText += fs.readFileSync(path.join(haystackDir, fileName), "utf-8") + "\n";
+  }
+
+  haystackCorpusCache.loaded = true;
+  haystackCorpusCache.fileCount = files.length;
+  haystackCorpusCache.text = corpusText;
+  haystackCorpusCache.totalChars = corpusText.length;
+  haystackCorpusCache.estimatedTokens = estimateTokensFromChars(corpusText.length);
+  haystackCorpusCache.tokensByTokenizer = new Map();
+
+  return haystackCorpusCache.text ? haystackCorpusCache : null;
+}
+
+function resolveOpenAIEncodingName(modelId = "") {
+  const normalizedModelId = String(modelId || "").trim().toLowerCase();
+  if (!normalizedModelId) return "o200k_base";
+  if (/^gpt-5(?:$|[.-])/.test(normalizedModelId)) return "o200k_base";
+  if (/^gpt-4\.1(?:$|[.-])/.test(normalizedModelId)) return "o200k_base";
+  if (/^gpt-4o(?:$|[.-])/.test(normalizedModelId)) return "o200k_base";
+  if (/^(o1|o3|o4)(?:$|[.-])/.test(normalizedModelId)) return "o200k_base";
+  if (/^gpt-4(?:$|[.-])/.test(normalizedModelId)) return "cl100k_base";
+  if (/^gpt-3\.5-turbo(?:$|[.-])/.test(normalizedModelId)) return "cl100k_base";
+  return "cl100k_base";
+}
+
+function getOpenAITokenizerAdapter(modelId = "") {
+  const normalizedModelId = String(modelId || "").trim();
+  const mappedEncodingName = resolveOpenAIEncodingName(normalizedModelId);
+  const mappedEncodingCacheKey = `openai:${mappedEncodingName}`;
+
+  if (openAiTokenizerCache.has(mappedEncodingCacheKey)) {
+    return openAiTokenizerCache.get(mappedEncodingCacheKey);
+  }
+
+  let tokenizerLabel = `OpenAI / ${mappedEncodingName}`;
+  try {
+    if (normalizedModelId) {
+      encodingForModel(normalizedModelId);
+      tokenizerLabel = `OpenAI / ${normalizedModelId} (${mappedEncodingName})`;
+    }
+  } catch {}
+
+  const encoder = getEncoding(mappedEncodingName);
+
+  const adapter = {
+    kind: "openai",
+    cacheKey: mappedEncodingCacheKey,
+    label: tokenizerLabel,
+    encode(text = "") {
+      return encoder.encode(String(text || ""));
+    },
+    decode(tokens = []) {
+      return encoder.decode(Array.isArray(tokens) ? tokens : Array.from(tokens || []));
+    },
+  };
+
+  openAiTokenizerCache.set(mappedEncodingCacheKey, adapter);
+  return adapter;
+}
+
+function getAnthropicTokenizerAdapter() {
+  if (anthropicTokenizerAdapter) {
+    return anthropicTokenizerAdapter;
+  }
+
+  const tokenizer = getAnthropicTokenizer();
+  anthropicTokenizerAdapter = {
+    kind: "anthropic",
+    cacheKey: "anthropic:official",
+    label: "Anthropic / official tokenizer",
+    encode(text = "") {
+      return tokenizer.encode(String(text || ""));
+    },
+    decode(tokens = []) {
+      const typed = tokens instanceof Uint32Array ? tokens : Uint32Array.from(tokens || []);
+      return utf8Decoder.decode(tokenizer.decode(typed));
+    },
+  };
+  return anthropicTokenizerAdapter;
+}
+
+function getTokenizerAdapter({ mode = "openai", modelId = "" } = {}) {
+  if (mode === "anthropic") {
+    return getAnthropicTokenizerAdapter();
+  }
+  return getOpenAITokenizerAdapter(modelId);
+}
+
+function getTokenSequenceLength(tokens = []) {
+  return Number(tokens?.length) || 0;
+}
+
+function sliceTokenSequence(tokens = [], start = 0, end = undefined) {
+  if (typeof tokens?.slice === "function") {
+    return tokens.slice(start, end);
+  }
+  return Array.from(tokens || []).slice(start, end);
+}
+
+function concatTokenSequences(kind = "openai", sequences = []) {
+  const validSequences = Array.isArray(sequences)
+    ? sequences.filter((item) => item && getTokenSequenceLength(item) > 0)
+    : [];
+
+  if (kind === "anthropic") {
+    const totalLength = validSequences.reduce((sum, item) => sum + getTokenSequenceLength(item), 0);
+    const merged = new Uint32Array(totalLength);
+    let offset = 0;
+    for (const sequence of validSequences) {
+      merged.set(sequence instanceof Uint32Array ? sequence : Uint32Array.from(sequence), offset);
+      offset += getTokenSequenceLength(sequence);
+    }
+    return merged;
+  }
+
+  const merged = [];
+  for (const sequence of validSequences) {
+    merged.push(...sequence);
+  }
+  return merged;
+}
+
+function getHaystackTokenSequence(tokenizer, corpusText = "") {
+  if (!tokenizer?.cacheKey) {
+    return {
+      tokens: tokenizer?.encode ? tokenizer.encode(corpusText) : [],
+      tokenCount: tokenizer?.encode ? getTokenSequenceLength(tokenizer.encode(corpusText)) : estimateTokensFromChars(corpusText.length),
+    };
+  }
+
+  if (haystackCorpusCache.tokensByTokenizer.has(tokenizer.cacheKey)) {
+    return haystackCorpusCache.tokensByTokenizer.get(tokenizer.cacheKey);
+  }
+
+  const tokens = tokenizer.encode(corpusText);
+  const tokenizedCorpus = {
+    tokens,
+    tokenCount: getTokenSequenceLength(tokens),
+  };
+  haystackCorpusCache.tokensByTokenizer.set(tokenizer.cacheKey, tokenizedCorpus);
+  return tokenizedCorpus;
+}
+
+function buildNeedleContextBundle({
+  mode = "openai",
+  modelId = "",
+  needle = "",
+  question = "",
+  requestedContextTokens = 2000,
+  depthPercent = 50,
+}) {
+  const haystackCorpus = loadHaystackCorpus();
+  if (!haystackCorpus?.text) {
+    throw new Error("no_haystack_data");
+  }
+
+  const tokenizer = getTokenizerAdapter({ mode, modelId });
+  const tokenizedCorpus = getHaystackTokenSequence(tokenizer, haystackCorpus.text);
+
+  const safeRequestedTokens = Math.max(1, Number(requestedContextTokens) || 2000);
+  const safeDepthPercent = Math.max(0, Math.min(100, Number(depthPercent) || 50));
+  const availableHaystackTokens = tokenizedCorpus.tokenCount;
+  const actualHaystackTokens = Math.min(safeRequestedTokens, availableHaystackTokens);
+  const baseHaystackTokens = sliceTokenSequence(tokenizedCorpus.tokens, 0, actualHaystackTokens);
+
+  const needleBlock = `\n${needle}\n`;
+  const questionBlock = `\n\n${question}`;
+  const needleTokens = tokenizer.encode(needleBlock);
+  const questionTokens = tokenizer.encode(questionBlock);
+  const insertIndex = Math.max(0, Math.min(
+    actualHaystackTokens,
+    Math.floor(actualHaystackTokens * (safeDepthPercent / 100))
+  ));
+
+  const contextTokens = concatTokenSequences(tokenizer.kind, [
+    sliceTokenSequence(baseHaystackTokens, 0, insertIndex),
+    needleTokens,
+    sliceTokenSequence(baseHaystackTokens, insertIndex),
+  ]);
+  const promptTokens = concatTokenSequences(tokenizer.kind, [contextTokens, questionTokens]);
+  const haystackText = tokenizer.decode(baseHaystackTokens);
+  const contextWithNeedle = tokenizer.decode(contextTokens);
+  const promptContent = contextWithNeedle + questionBlock;
+
+  return {
+    haystackCorpus,
+    tokenizer,
+    promptContent,
+    haystackText,
+    contextWithNeedle,
+    requestedContextTokens: safeRequestedTokens,
+    actualHaystackTokens,
+    actualContextTokens: getTokenSequenceLength(contextTokens),
+    actualPromptTokens: getTokenSequenceLength(promptTokens),
+    needleTokenCount: getTokenSequenceLength(needleTokens),
+    questionTokenCount: getTokenSequenceLength(questionTokens),
+    hitCorpusCapacity: actualHaystackTokens < safeRequestedTokens,
+  };
+}
+
+function normalizeComparisonText(text = "") {
+  return String(text || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function splitExpectedKeywords(value = "") {
+  const raw = String(value || "").trim();
+  if (!raw) return [];
+  const phrases = raw
+    .split(/[\r\n,;|]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (phrases.length > 1) return phrases;
+  return raw
+    .split(/\s+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 2);
+}
+
+function scoreNeedleResponse({
+  responseText = "",
+  needle = "",
+  expectedAnswer = "",
+  scoringMode = "keyword",
+}) {
+  const mode = ["keyword", "exact", "contains", "regex"].includes(scoringMode)
+    ? scoringMode
+    : "keyword";
+  const response = String(responseText || "");
+  const referenceText = String(expectedAnswer || needle || "").trim();
+  const normalizedResponse = normalizeComparisonText(response);
+  const normalizedReference = normalizeComparisonText(referenceText);
+
+  if (!referenceText) {
+    return {
+      mode,
+      score: 0,
+      pass: false,
+      referenceText: "",
+      detail: "缺少评分参考答案",
+      matchedKeywords: [],
+      totalKeywords: 0,
+    };
+  }
+
+  if (mode === "exact") {
+    const pass = normalizedReference.length > 0 && normalizedResponse === normalizedReference;
+    return {
+      mode,
+      score: pass ? 100 : 0,
+      pass,
+      referenceText,
+      detail: pass ? "完全匹配参考答案" : "响应未与参考答案完全匹配",
+      matchedKeywords: [],
+      totalKeywords: 0,
+    };
+  }
+
+  if (mode === "contains") {
+    const pass = normalizedReference.length > 0 && normalizedResponse.includes(normalizedReference);
+    return {
+      mode,
+      score: pass ? 100 : 0,
+      pass,
+      referenceText,
+      detail: pass ? "响应包含参考答案" : "响应未包含参考答案",
+      matchedKeywords: [],
+      totalKeywords: 0,
+    };
+  }
+
+  if (mode === "regex") {
+    try {
+      const regexp = new RegExp(referenceText, "i");
+      const pass = regexp.test(response);
+      return {
+        mode,
+        score: pass ? 100 : 0,
+        pass,
+        referenceText,
+        detail: pass ? "响应匹配正则规则" : "响应未匹配正则规则",
+        matchedKeywords: [],
+        totalKeywords: 0,
+      };
+    } catch (error) {
+      return {
+        mode,
+        score: 0,
+        pass: false,
+        referenceText,
+        detail: `正则表达式无效：${error?.message || "regex_invalid"}`,
+        matchedKeywords: [],
+        totalKeywords: 0,
+      };
+    }
+  }
+
+  const keywords = splitExpectedKeywords(referenceText);
+  if (keywords.length === 0) {
+    return {
+      mode,
+      score: 0,
+      pass: false,
+      referenceText,
+      detail: "关键词模式下未提取到有效关键词",
+      matchedKeywords: [],
+      totalKeywords: 0,
+    };
+  }
+
+  const matchedKeywords = keywords.filter((keyword) =>
+    normalizedResponse.includes(normalizeComparisonText(keyword))
+  );
+  const score = Math.round((matchedKeywords.length / keywords.length) * 100);
+
+  return {
+    mode,
+    score,
+    pass: matchedKeywords.length === keywords.length,
+    referenceText,
+    detail: `命中 ${matchedKeywords.length}/${keywords.length} 个关键词`,
+    matchedKeywords,
+    totalKeywords: keywords.length,
+  };
+}
+
+function buildSkippedSourceAnalysis(mode = "anthropic", skipReason = "quick_mode") {
+  return {
+    supported: false,
+    skipped: true,
+    skipReason,
+    verdict: "unavailable",
+    verdictLabel: "",
+    confidence: 0,
+    proxyPlatform: "",
+    summaryText: mode === "anthropic"
+      ? "快速模式下已跳过来源判定、证据面板与 ratelimit 动态验证。"
+      : "快速模式下已跳过额外 tools / Structured Outputs / GPT-5.4 画像探针。",
+    evidence: [],
+    fingerprints: [],
+    ratelimitCheck: {
+      verdict: "unavailable",
+      label: "已跳过",
+      detail: "快速模式未执行深度来源分析",
+      samples: [],
+    },
+    factValues: {
+      tool: "--",
+      message: "--",
+      thinking: "--",
+    },
+  };
+}
 
 function sendJson(res, statusCode, payload) {
   res.statusCode = statusCode;
@@ -1287,6 +1750,7 @@ function buildDetectResultPayload({
   responseModel,
   sourceAnalysis,
   openaiResponseMeta,
+  analysisDepth = "deep",
 }) {
   const scoring = isAnthropic
     ? buildAnthropicDetectBreakdown({
@@ -1319,6 +1783,7 @@ function buildDetectResultPayload({
     firstChunkLatencyMs,
     mode: isAnthropic ? "anthropic" : "openai",
     requestType,
+    analysisDepth,
   };
 }
 
@@ -1712,10 +2177,13 @@ async function performOpenAIAuthenticityProbe({ apiUrl, apiKey, probeType, targe
 
   const started = Date.now();
   try {
-    const upstream = await fetch(endpoint, {
+    const upstream = await fetchWithTimeout(endpoint, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
+    }, {
+      timeoutMs: getProbeTimeoutMs(),
+      label: `openai_probe_${probeType}`,
     });
 
     const latencyMs = Date.now() - started;
@@ -2366,10 +2834,13 @@ async function performAnthropicSourceProbe({ apiUrl, apiKey, modelId, requestTyp
 
   const started = Date.now();
   try {
-    const upstream = await fetch(endpoint, {
+    const upstream = await fetchWithTimeout(endpoint, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
+    }, {
+      timeoutMs: getProbeTimeoutMs({ useStream }),
+      label: `anthropic_probe_${probeType}`,
     });
 
     if (upstream.status !== 200) {
@@ -2767,10 +3238,13 @@ async function handleProbe(req, res) {
     const anthropicStream = mode === "anthropic" && body && body.stream === true;
 
     const started = Date.now();
-    const upstream = await fetch(endpoint, {
+    const upstream = await fetchWithTimeout(endpoint, {
       method,
       headers,
       body: JSON.stringify(body),
+    }, {
+      timeoutMs: anthropicStream ? getProbeTimeoutMs({ useStream: true }) : getProbeTimeoutMs(),
+      label: "probe_request",
     });
     const firstChunkStartedAt = Date.now();
     let firstChunkLatencyMs = null;
@@ -2934,6 +3408,7 @@ async function handleDetect(req, res) {
     const parsed = JSON.parse(raw || "{}");
     const { apiUrl, apiKey, modelId, mode, withThinking } = parsed;
     const requestType = parsed.requestType === "stream" ? "stream" : "nonstream";
+    const analysisDepth = parsed.analysisDepth === "quick" ? "quick" : "deep";
 
     if (!apiUrl || !apiKey || !modelId) {
       sendJson(res, 400, { ok: false, error: "missing_params" });
@@ -2951,10 +3426,13 @@ async function handleDetect(req, res) {
 
     // Use probe logic
     const started = Date.now();
-    const upstream = await fetch(endpoint, {
+    const upstream = await fetchWithTimeout(endpoint, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
+    }, {
+      timeoutMs: getDetectTimeoutMs({ isAnthropic, useStream, withThinking }),
+      label: "detect_request",
     });
 
     if (upstream.status !== 200) {
@@ -3010,31 +3488,35 @@ async function handleDetect(req, res) {
     const latencyMs = Date.now() - started;
     let sourceAnalysis;
 
-    try {
-      sourceAnalysis = await detectSourceAnalysis({
-        apiUrl,
-        apiKey,
-        modelId,
-        mode,
-        requestType,
-      });
-    } catch (sourceError) {
-      sourceAnalysis = {
-        supported: false,
-        verdict: "unknown",
-        verdictLabel: "分析失败",
-        confidence: 0,
-        proxyPlatform: "",
-        summaryText: "来源分析执行失败，但不影响兼容性得分。",
-        evidence: [`来源分析异常：${sourceError?.message || "source_analysis_failed"}`],
-        fingerprints: [],
-        ratelimitCheck: {
-          verdict: "unavailable",
-          label: "未执行",
-          detail: "来源分析异常",
-          samples: [],
-        },
-      };
+    if (analysisDepth === "deep") {
+      try {
+        sourceAnalysis = await detectSourceAnalysis({
+          apiUrl,
+          apiKey,
+          modelId,
+          mode,
+          requestType,
+        });
+      } catch (sourceError) {
+        sourceAnalysis = {
+          supported: false,
+          verdict: "unknown",
+          verdictLabel: "分析失败",
+          confidence: 0,
+          proxyPlatform: "",
+          summaryText: "来源分析执行失败，但不影响兼容性得分。",
+          evidence: [`来源分析异常：${sourceError?.message || "source_analysis_failed"}`],
+          fingerprints: [],
+          ratelimitCheck: {
+            verdict: "unavailable",
+            label: "未执行",
+            detail: "来源分析异常",
+            samples: [],
+          },
+        };
+      }
+    } else {
+      sourceAnalysis = buildSkippedSourceAnalysis(mode, "quick_mode");
     }
 
     const resultPayload = buildDetectResultPayload({
@@ -3053,6 +3535,7 @@ async function handleDetect(req, res) {
       responseModel,
       sourceAnalysis,
       openaiResponseMeta,
+      analysisDepth,
     });
     resultPayload.sourceAnalysis = sourceAnalysis;
 
@@ -3081,6 +3564,7 @@ async function handleDetectLive(req, res) {
     const parsed = JSON.parse(raw || "{}");
     const { apiUrl, apiKey, modelId, mode, withThinking } = parsed;
     const requestType = parsed.requestType === "stream" ? "stream" : "nonstream";
+    const analysisDepth = parsed.analysisDepth === "quick" ? "quick" : "deep";
 
     if (!apiUrl || !apiKey || !modelId) {
       sendNdjsonChunk(res, { type: "error", error: "missing_params" });
@@ -3103,10 +3587,13 @@ async function handleDetectLive(req, res) {
     });
 
     const started = Date.now();
-    const upstream = await fetch(endpoint, {
+    const upstream = await fetchWithTimeout(endpoint, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
+    }, {
+      timeoutMs: getDetectTimeoutMs({ isAnthropic, useStream, withThinking }),
+      label: "detect_live_request",
     });
 
     if (upstream.status !== 200) {
@@ -3180,37 +3667,43 @@ async function handleDetectLive(req, res) {
 
     sendNdjsonChunk(res, {
       type: "status",
-      summaryCopy: mode === "anthropic"
-        ? "主响应已完成，正在执行来源指纹分析与 ratelimit 验证。"
-        : "主响应已完成，正在执行 OpenAI 协议兼容性探针（tools / Structured Outputs）并整理画像摘要。",
+      summaryCopy: analysisDepth === "quick"
+        ? "主响应已完成，快速模式将跳过深度来源分析，仅保留主请求兼容性评分。"
+        : mode === "anthropic"
+          ? "主响应已完成，正在执行来源指纹分析与 ratelimit 验证。"
+          : "主响应已完成，正在执行 OpenAI 协议兼容性探针（tools / Structured Outputs）并整理画像摘要。",
     });
 
     let sourceAnalysis;
-    try {
-      sourceAnalysis = await detectSourceAnalysis({
-        apiUrl,
-        apiKey,
-        modelId,
-        mode,
-        requestType,
-      });
-    } catch (sourceError) {
-      sourceAnalysis = {
-        supported: false,
-        verdict: "unknown",
-        verdictLabel: "分析失败",
-        confidence: 0,
-        proxyPlatform: "",
-        summaryText: "来源分析执行失败，但不影响兼容性得分。",
-        evidence: [`来源分析异常：${sourceError?.message || "source_analysis_failed"}`],
-        fingerprints: [],
-        ratelimitCheck: {
-          verdict: "unavailable",
-          label: "未执行",
-          detail: "来源分析异常",
-          samples: [],
-        },
-      };
+    if (analysisDepth === "deep") {
+      try {
+        sourceAnalysis = await detectSourceAnalysis({
+          apiUrl,
+          apiKey,
+          modelId,
+          mode,
+          requestType,
+        });
+      } catch (sourceError) {
+        sourceAnalysis = {
+          supported: false,
+          verdict: "unknown",
+          verdictLabel: "分析失败",
+          confidence: 0,
+          proxyPlatform: "",
+          summaryText: "来源分析执行失败，但不影响兼容性得分。",
+          evidence: [`来源分析异常：${sourceError?.message || "source_analysis_failed"}`],
+          fingerprints: [],
+          ratelimitCheck: {
+            verdict: "unavailable",
+            label: "未执行",
+            detail: "来源分析异常",
+            samples: [],
+          },
+        };
+      }
+    } else {
+      sourceAnalysis = buildSkippedSourceAnalysis(mode, "quick_mode");
     }
 
     const resultPayload = buildDetectResultPayload({
@@ -3229,6 +3722,7 @@ async function handleDetectLive(req, res) {
       responseModel,
       sourceAnalysis,
       openaiResponseMeta,
+      analysisDepth,
     });
     resultPayload.sourceAnalysis = sourceAnalysis;
 
@@ -3290,40 +3784,40 @@ async function handleNeedle(req, res) {
     } = parsed;
     const requestType = parsed.requestType === "stream" ? "stream" : "nonstream";
     const useStream = requestType === "stream";
+    const scoringMode = ["keyword", "exact", "contains", "regex"].includes(parsed.scoringMode)
+      ? parsed.scoringMode
+      : "keyword";
+    const expectedAnswer = typeof parsed.expectedAnswer === "string"
+      ? parsed.expectedAnswer
+      : "";
 
     if (!apiUrl || !apiKey || !modelId || !needle || !question) {
       sendJson(res, 400, { ok: false, error: "missing_params" });
       return;
     }
-
-    // Load haystack text
-    const haystackDir = path.join(publicDir, "data", "haystack");
-    let haystackText = "";
-    if (fs.existsSync(haystackDir)) {
-      const files = fs.readdirSync(haystackDir).filter((f) => f.endsWith(".txt")).sort();
-      for (const f of files) {
-        haystackText += fs.readFileSync(path.join(haystackDir, f), "utf-8") + "\n";
-      }
-    }
-
-    if (!haystackText) {
-      sendJson(res, 400, { ok: false, error: "no_haystack_data" });
-      return;
-    }
-
-    // Truncate to target context length (rough chars, ~4 chars per token)
-    const targetChars = (contextLength || 2000) * 4;
-    if (haystackText.length > targetChars) {
-      haystackText = haystackText.slice(0, targetChars);
-    }
-
-    // Insert needle at depth
-    const depth = Math.max(0, Math.min(100, depthPercent || 50));
-    const insertPos = Math.floor(haystackText.length * (depth / 100));
-    const contextWithNeedle =
-      haystackText.slice(0, insertPos) +
-      "\n" + needle + "\n" +
-      haystackText.slice(insertPos);
+    const requestedContextTokens = Math.max(1, Number(contextLength) || 2000);
+    const depth = Math.max(0, Math.min(100, Number(depthPercent) || 50));
+    const contextBundle = buildNeedleContextBundle({
+      mode,
+      modelId,
+      needle,
+      question,
+      requestedContextTokens,
+      depthPercent: depth,
+    });
+    const {
+      haystackCorpus,
+      tokenizer,
+      promptContent,
+      haystackText,
+      contextWithNeedle,
+      actualHaystackTokens,
+      actualContextTokens,
+      actualPromptTokens,
+      needleTokenCount,
+      questionTokenCount,
+      hitCorpusCapacity,
+    } = contextBundle;
 
     // Build request
     const isAnthropic = mode === "anthropic";
@@ -3341,7 +3835,7 @@ async function handleNeedle(req, res) {
         model: modelId,
         messages: [{
           role: "user",
-          content: contextWithNeedle + "\n\n" + question,
+          content: promptContent,
         }],
         max_tokens: 1024,
         stream: useStream,
@@ -3356,7 +3850,7 @@ async function handleNeedle(req, res) {
         model: modelId,
         messages: [{
           role: "user",
-          content: contextWithNeedle + "\n\n" + question,
+          content: promptContent,
         }],
         max_tokens: 1024,
         stream: useStream,
@@ -3367,10 +3861,13 @@ async function handleNeedle(req, res) {
     }
 
     const started = Date.now();
-    const upstream = await fetch(endpoint, {
+    const upstream = await fetchWithTimeout(endpoint, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
+    }, {
+      timeoutMs: getNeedleTimeoutMs({ requestType, contextLength: requestedContextTokens }),
+      label: "needle_request",
     });
 
     if (upstream.status !== 200) {
@@ -3406,25 +3903,47 @@ async function handleNeedle(req, res) {
     }
     const latencyMs = Date.now() - started;
 
-    // Simple scoring: check if the needle info is in the response
-    const needleWords = needle.toLowerCase().split(/\s+/).filter((w) => w.length > 3);
-    const respLower = responseText.toLowerCase();
-    const matchedWords = needleWords.filter((w) => respLower.includes(w));
-    const retrievalScore = needleWords.length > 0
-      ? Math.round((matchedWords.length / needleWords.length) * 100)
-      : 0;
+    const scoring = scoreNeedleResponse({
+      responseText,
+      needle,
+      expectedAnswer,
+      scoringMode,
+    });
+    const retrievalScore = scoring.score;
 
     sendJson(res, 200, {
       ok: true,
       responseText,
       retrievalScore,
-      contextLength,
+      contextLength: requestedContextTokens,
       depthPercent: depth,
       latencyMs,
       usage,
       requestType,
+      scoring,
+      contextMetrics: {
+        requestedTokens: requestedContextTokens,
+        actualHaystackTokens,
+        actualContextTokens,
+        actualPromptTokens,
+        needleTokenCount,
+        questionTokenCount,
+        actualHaystackChars: haystackText.length,
+        actualContextChars: contextWithNeedle.length,
+        actualPromptChars: promptContent.length,
+        datasetEstimatedMaxTokens: haystackCorpus.estimatedTokens,
+        datasetActualMaxTokens: getHaystackTokenSequence(tokenizer, haystackCorpus.text).tokenCount,
+        corpusFileCount: haystackCorpus.fileCount,
+        hitCorpusCapacity,
+        tokenizerLabel: tokenizer.label,
+        tokenizerKind: tokenizer.kind,
+      },
     });
   } catch (error) {
+    if ((error?.message || "") === "no_haystack_data") {
+      sendJson(res, 400, { ok: false, error: "no_haystack_data" });
+      return;
+    }
     sendJson(res, 500, { ok: false, error: error?.message || "needle_failed" });
   }
 }

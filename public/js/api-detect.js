@@ -16,6 +16,7 @@ const ApiDetect = (() => {
     setupModelGrid();
     setupModeSelector();
     setupRequestTypeSelector();
+    setupAnalysisDepthSelector();
     setupKeyToggle();
     setupDetectButton();
     setupDetectScanButton();
@@ -38,6 +39,12 @@ const ApiDetect = (() => {
 
   function getActiveMode() {
     return document.querySelector('.mode-btn.active')?.dataset.mode || loadConfig('mode', 'anthropic');
+  }
+
+  function getAnalysisDepth() {
+    const value = document.getElementById('detect-analysis-depth')?.value;
+    if (value === 'quick' || value === 'deep') return value;
+    return loadConfig('detectAnalysisDepth', 'deep') === 'quick' ? 'quick' : 'deep';
   }
 
   function getDefaultSourceFactLabels(mode = getActiveMode()) {
@@ -185,29 +192,41 @@ const ApiDetect = (() => {
     }
   }
 
-  function updateDetectRunNote(mode = getActiveMode()) {
+  function updateDetectRunNote(mode = getActiveMode(), analysisDepth = getAnalysisDepth()) {
     const note = document.getElementById('detect-run-note');
     const scanNote = document.getElementById('scan-note');
     const isEn = getUiLang() === 'en';
 
     if (note) {
-      note.textContent = mode === 'anthropic'
-        ? (isEn
-          ? 'Anthropic mode adds three-source verdicting, evidence review, and ratelimit dynamic verification. Common-model scans help reveal mixed upstream channels.'
-          : 'Anthropic 模式下会额外给出三源来源判定、证据面板与 ratelimit 动态验证；扫描常见模型可用于判断是否存在混合渠道。')
-        : (isEn
-          ? 'OpenAI mode checks Chat Completions protocol compatibility first: response shape, finish_reason, stream delta, usage, tools, and structured outputs. GPT-5.4 models also get upstream-profile probes.'
-          : 'OpenAI 模式会先检查 Chat Completions 协议兼容性：响应结构、finish_reason、stream delta、usage、tools 与 Structured Outputs；若模型是 GPT-5.4，还会追加上游画像探针。');
+      if (analysisDepth === 'quick') {
+        note.textContent = isEn
+          ? 'Quick mode only sends the primary request and returns the compatibility score immediately. Source verdicts, ratelimit checks, tools/schema probes, and GPT-5.4 profile probes are skipped.'
+          : '快速模式只发送主请求并尽快返回兼容性得分；来源判定、ratelimit 验证、tools/schema 探针与 GPT-5.4 画像探针都会跳过。';
+      } else {
+        note.textContent = mode === 'anthropic'
+          ? (isEn
+            ? 'Deep Anthropic mode adds three-source verdicting, evidence review, and ratelimit dynamic verification. Common-model scans help reveal mixed upstream channels.'
+            : '深度 Anthropic 模式会额外给出三源来源判定、证据面板与 ratelimit 动态验证；扫描常见模型可用于判断是否存在混合渠道。')
+          : (isEn
+            ? 'Deep OpenAI mode checks Chat Completions protocol compatibility first: response shape, finish_reason, stream delta, usage, tools, and structured outputs. GPT-5.4 models also get upstream-profile probes.'
+            : '深度 OpenAI 模式会先检查 Chat Completions 协议兼容性：响应结构、finish_reason、stream delta、usage、tools 与 Structured Outputs；若模型是 GPT-5.4，还会追加上游画像探针。');
+      }
     }
 
     if (scanNote) {
-      scanNote.textContent = mode === 'anthropic'
-        ? (isEn
-          ? 'Each scanned model shows a source verdict, confidence, average latency, and ratelimit verification result.'
-          : '扫描结果会按模型展示来源判定、置信度、延迟和 ratelimit 验证情况。')
-        : (isEn
-          ? 'OpenAI scans summarize protocol compatibility first, then add GPT-5.4 upstream-profile probes when applicable.'
-          : 'OpenAI 扫描会先总结协议兼容性，再在适用时追加 GPT-5.4 上游画像探针。');
+      if (analysisDepth === 'quick') {
+        scanNote.textContent = isEn
+          ? 'Multi-model scan remains a deep analysis workflow even when the single-detect panel is set to quick mode.'
+          : '即使单次检测切到快速模式，多模型扫描仍然会按深度分析流程执行。';
+      } else {
+        scanNote.textContent = mode === 'anthropic'
+          ? (isEn
+            ? 'Each scanned model shows a source verdict, confidence, average latency, and ratelimit verification result.'
+            : '扫描结果会按模型展示来源判定、置信度、延迟和 ratelimit 验证情况。')
+          : (isEn
+            ? 'OpenAI scans summarize protocol compatibility first, then add GPT-5.4 upstream-profile probes when applicable.'
+            : 'OpenAI 扫描会先总结协议兼容性，再在适用时追加 GPT-5.4 上游画像探针。');
+      }
     }
   }
 
@@ -233,7 +252,7 @@ const ApiDetect = (() => {
       : (isEn ? 'Multi-model Upstream Profiles' : '多模型接口画像');
 
     applySourceFactLabels(getDefaultSourceFactLabels(mode));
-    updateDetectRunNote(mode);
+    updateDetectRunNote(mode, getAnalysisDepth());
     updateResultExportButtonTexts();
     syncActionButtons();
     updateResultExportButtons();
@@ -388,6 +407,18 @@ const ApiDetect = (() => {
     });
   }
 
+  function setupAnalysisDepthSelector() {
+    const select = document.getElementById('detect-analysis-depth');
+    if (!select) return;
+
+    select.value = loadConfig('detectAnalysisDepth', 'deep');
+    select.addEventListener('change', () => {
+      const analysisDepth = select.value === 'quick' ? 'quick' : 'deep';
+      saveConfig('detectAnalysisDepth', analysisDepth);
+      updateDetectRunNote(getActiveMode(), analysisDepth);
+    });
+  }
+
   function setMode(mode) {
     document.querySelectorAll('.mode-btn').forEach((b) => b.classList.remove('active'));
     const target = document.querySelector(`.mode-btn[data-mode="${mode}"]`);
@@ -429,11 +460,13 @@ const ApiDetect = (() => {
 
     clearBtn.addEventListener('click', () => {
       input.value = '';
-      saveConfig('apiKey', '');
+      saveVolatileConfig('apiKey', '');
+      removeConfig('apiKey');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
     });
 
     input.addEventListener('input', () => {
-      saveConfig('apiKey', input.value);
+      saveVolatileConfig('apiKey', input.value);
     });
   }
 
@@ -577,6 +610,7 @@ const ApiDetect = (() => {
     const modelId = document.getElementById('model-id').value.trim();
     const mode = document.querySelector('.mode-btn.active')?.dataset.mode || 'anthropic';
     const requestType = document.getElementById('detect-request-type')?.value === 'stream' ? 'stream' : 'nonstream';
+    const analysisDepth = getAnalysisDepth();
     const withThinking = document.getElementById('with-thinking')?.checked ?? true;
 
     if (!apiUrl) {
@@ -623,19 +657,19 @@ const ApiDetect = (() => {
     });
 
     try {
-      const payload = { apiUrl, apiKey, modelId, mode, withThinking, requestType };
+      const payload = { apiUrl, apiKey, modelId, mode, withThinking, requestType, analysisDepth };
       const data = requestType === 'stream'
         ? await requestStreamingDetection(payload)
         : await requestDetection(payload);
 
       if (!data.ok) {
-        showError(data.error || '检测失败', { modelId, apiUrl, mode, requestType });
+        showError(data.error || '检测失败', { modelId, apiUrl, mode, requestType, analysisDepth });
         return;
       }
 
-      handleDetectionSuccess(data, { modelId, apiUrl, mode, requestType });
+      handleDetectionSuccess(data, { modelId, apiUrl, mode, requestType, analysisDepth });
     } catch (err) {
-      showError(err.message, { modelId, apiUrl, mode, requestType });
+      showError(err.message, { modelId, apiUrl, mode, requestType, analysisDepth });
     } finally {
       isDetectionRunning = false;
       syncActionButtons();
@@ -843,7 +877,7 @@ const ApiDetect = (() => {
       statusText: scoreLabel(data.score),
       modelId: context.modelId,
       apiUrl: context.apiUrl,
-      summaryCopy: `${getUiLang() === 'en' ? 'Overall score' : '综合得分'} ${data.score}% · ${context.mode === 'anthropic' ? 'Anthropic' : 'OpenAI'} ${getUiLang() === 'en' ? 'format' : '格式'} · ${context.requestType === 'stream' ? (getUiLang() === 'en' ? 'stream request' : '流式调用') : (getUiLang() === 'en' ? 'non-stream request' : '非流式调用')}${sourceLabel ? ` · ${sourceLabel}` : ''} · ${getUiLang() === 'en' ? 'Review the checklist, source evidence, and metrics together.' : '建议结合检查项、来源证据与性能指标一起复核。'}`
+      summaryCopy: `${getUiLang() === 'en' ? 'Overall score' : '综合得分'} ${data.score}% · ${context.mode === 'anthropic' ? 'Anthropic' : 'OpenAI'} ${getUiLang() === 'en' ? 'format' : '格式'} · ${context.requestType === 'stream' ? (getUiLang() === 'en' ? 'stream request' : '流式调用') : (getUiLang() === 'en' ? 'non-stream request' : '非流式调用')} · ${context.analysisDepth === 'quick' ? (getUiLang() === 'en' ? 'quick mode' : '快速模式') : (getUiLang() === 'en' ? 'deep mode' : '深度模式')}${sourceLabel ? ` · ${sourceLabel}` : ''} · ${getUiLang() === 'en' ? 'Review the checklist, source evidence, and metrics together.' : '建议结合检查项、来源证据与性能指标一起复核。'}`
     });
     latestDetectExport = {
       ok: true,
@@ -854,6 +888,7 @@ const ApiDetect = (() => {
         endpoint: extractHostname(context.apiUrl),
         mode: context.mode,
         requestType: context.requestType,
+        analysisDepth: context.analysisDepth || 'deep',
       },
       data,
     };
@@ -928,7 +963,7 @@ const ApiDetect = (() => {
       statusText: '等待检测',
       modelId: '--',
       apiUrl: '--',
-      summaryCopy: '系统将根据响应结构、finish_reason、stream / usage、tools、Structured Outputs 与可用画像证据生成综合判断。'
+      summaryCopy: '系统将根据响应结构、finish_reason、stream / usage、tools、Structured Outputs 与可用画像证据生成综合判断。快速模式下会跳过深度来源分析。'
     });
   }
 
@@ -1174,6 +1209,7 @@ const ApiDetect = (() => {
       `接口 / Endpoint: ${snapshot.endpoint}`,
       `模式 / Mode: ${context.mode || '--'}`,
       `调用方式 / Request Type: ${context.requestType || '--'}`,
+      `检测深度 / Analysis Depth: ${context.analysisDepth || '--'}`,
       `摘要 / Summary: ${snapshot.summary || '--'}`,
       '',
       '来源判定 / Source',
@@ -1498,6 +1534,44 @@ const ApiDetect = (() => {
     const msgText = document.getElementById('source-msg-text');
     const thinkingText = document.getElementById('source-thinking-text');
 
+    if (sourceAnalysis.skipped) {
+      const isEn = getUiLang() === 'en';
+      applySourceFactLabels(getDefaultSourceFactLabels());
+      if (badge) {
+        badge.className = 'source-badge unavailable';
+        badge.textContent = sourceAnalysis.skipReason === 'quick_mode'
+          ? (isEn ? 'Quick Mode' : '快速模式')
+          : (isEn ? 'Skipped' : '已跳过');
+      }
+      if (confidence) confidence.textContent = '--';
+      if (platform) {
+        platform.textContent = isEn ? 'Skipped' : '已跳过';
+        platform.title = '';
+      }
+      if (ratelimit) {
+        ratelimit.textContent = isEn ? 'Skipped' : '已跳过';
+        ratelimit.title = sourceAnalysis.summaryText || '';
+      }
+      if (toolText) {
+        toolText.textContent = isEn ? 'Primary request only' : '仅主请求';
+        toolText.title = '';
+      }
+      if (msgText) {
+        msgText.textContent = isEn ? 'No extra probes' : '未执行额外探针';
+        msgText.title = '';
+      }
+      if (thinkingText) {
+        thinkingText.textContent = isEn ? 'Deep checks skipped' : '已跳过深度检查';
+        thinkingText.title = '';
+      }
+      renderEvidenceList([
+        sourceAnalysis.summaryText || (isEn
+          ? 'Deep source analysis was skipped in quick mode.'
+          : '快速模式下已跳过深度来源分析。'),
+      ]);
+      return;
+    }
+
     const fingerprints = validFingerprints(sourceAnalysis);
     const toolFingerprint = pickFingerprint(fingerprints, (item) => item.toolIdFormat || item.toolId);
     const messageFingerprint = pickFingerprint(fingerprints, (item) => item.messageIdFormat || item.messageId);
@@ -1645,6 +1719,7 @@ const ApiDetect = (() => {
         endpoint: extractHostname(context.apiUrl || ''),
         mode: context.mode || getActiveMode(),
         requestType: context.requestType || document.getElementById('detect-request-type')?.value || 'nonstream',
+        analysisDepth: context.analysisDepth || getAnalysisDepth(),
       },
       error: String(msg || '未知错误'),
       data: null,
@@ -1973,8 +2048,10 @@ const ApiDetect = (() => {
     const apiUrlInput = document.getElementById('api-url');
     const modelInput = document.getElementById('model-id');
     const requestTypeSelect = document.getElementById('detect-request-type');
+    const analysisDepthSelect = document.getElementById('detect-analysis-depth');
     const mode = context.mode || 'anthropic';
     const requestType = context.requestType === 'stream' ? 'stream' : 'nonstream';
+    const analysisDepth = context.analysisDepth === 'quick' ? 'quick' : 'deep';
 
     if (context.apiUrl && apiUrlInput) {
       apiUrlInput.value = context.apiUrl;
@@ -1994,6 +2071,11 @@ const ApiDetect = (() => {
       requestTypeMap[mode] = requestType;
       saveConfig('detectRequestTypeMap', requestTypeMap);
       saveConfig('detectRequestType', requestType);
+    }
+
+    if (analysisDepthSelect) {
+      analysisDepthSelect.value = analysisDepth;
+      saveConfig('detectAnalysisDepth', analysisDepth);
     }
   }
 
@@ -2277,10 +2359,14 @@ const ApiDetect = (() => {
   /* ── Config Persistence ── */
   function loadSavedConfig() {
     const url = loadConfig('apiUrl', '');
-    const key = loadConfig('apiKey', '');
+    const key = loadVolatileConfig('apiKey', '');
     const mode = loadConfig('mode', 'anthropic');
+    const analysisDepth = loadConfig('detectAnalysisDepth', 'deep');
+    removeConfig('apiKey');
     if (url) document.getElementById('api-url').value = url;
     if (key) document.getElementById('api-key').value = key;
+    const analysisDepthSelect = document.getElementById('detect-analysis-depth');
+    if (analysisDepthSelect) analysisDepthSelect.value = analysisDepth;
     setMode(mode);
   }
 

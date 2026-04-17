@@ -1,5 +1,7 @@
 /* ── Utility Functions ─────────────────── */
 
+const volatileConfigStore = new Map();
+
 function dispatchAppEvent(name, detail = {}) {
   try {
     document.dispatchEvent(new CustomEvent(name, { detail }));
@@ -15,6 +17,13 @@ function saveConfig(key, value) {
   } catch {}
 }
 
+function removeConfig(key) {
+  try {
+    localStorage.removeItem('apimaster_' + key);
+    dispatchAppEvent('apimaster:config-changed', { key, removed: true });
+  } catch {}
+}
+
 function loadConfig(key, defaultValue) {
   try {
     const v = localStorage.getItem('apimaster_' + key);
@@ -22,6 +31,20 @@ function loadConfig(key, defaultValue) {
   } catch {
     return defaultValue;
   }
+}
+
+function saveVolatileConfig(key, value) {
+  if (!key) return;
+  if (value === undefined || value === null || value === '') {
+    volatileConfigStore.delete(key);
+  } else {
+    volatileConfigStore.set(key, value);
+  }
+  dispatchAppEvent('apimaster:config-changed', { key, value, volatile: true });
+}
+
+function loadVolatileConfig(key, defaultValue) {
+  return volatileConfigStore.has(key) ? volatileConfigStore.get(key) : defaultValue;
 }
 
 function formatTime(date) {

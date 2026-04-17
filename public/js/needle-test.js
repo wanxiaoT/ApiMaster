@@ -50,6 +50,8 @@ const NeedleTest = (() => {
     requestType: 'nonstream',
     needle: 'Verification phrase: cobalt chrysanthemum zephyr lighthouse peninsula marigold.',
     question: 'What is the verification phrase? Reply with the exact phrase only.',
+    expectedAnswer: 'cobalt chrysanthemum zephyr lighthouse peninsula marigold',
+    scoringMode: 'exact',
     ctxMin: 128000,
     ctxMax: 256000,
     ctxIntervals: 1,
@@ -57,6 +59,16 @@ const NeedleTest = (() => {
     depthMax: 90,
     depthIntervals: 2,
   };
+
+  function getSharedApiUrl() {
+    const detectInputValue = document.getElementById('api-url')?.value?.trim();
+    return detectInputValue || loadConfig('apiUrl', '');
+  }
+
+  function getSharedApiKey() {
+    const detectInputValue = document.getElementById('api-key')?.value?.trim();
+    return detectInputValue || loadVolatileConfig('apiKey', '');
+  }
 
   function init() {
     setupStartButton();
@@ -116,11 +128,15 @@ const NeedleTest = (() => {
 
   function bindNeedleInputs() {
     const ids = [
+      'needle-api-url',
+      'needle-api-key',
       'needle-model',
       'needle-mode',
       'needle-request-type',
       'needle-text',
       'needle-question',
+      'needle-expected-answer',
+      'needle-scoring-mode',
       'needle-ctx-min',
       'needle-ctx-max',
       'needle-ctx-intervals',
@@ -137,6 +153,12 @@ const NeedleTest = (() => {
       el.addEventListener(eventName, () => {
         if (id === 'needle-mode') {
           el.dataset.userSet = 'true';
+        } else if (id === 'needle-api-url' || id === 'needle-api-key') {
+          if (typeof el.value === 'string' && el.value.trim()) {
+            el.dataset.userSet = 'true';
+          } else {
+            delete el.dataset.userSet;
+          }
         }
         saveNeedleSettings();
         updatePresetIndicators();
@@ -146,8 +168,8 @@ const NeedleTest = (() => {
   }
 
   function loadSavedNeedleConfig() {
-    const url = loadConfig('apiUrl', '');
-    const key = loadConfig('apiKey', '');
+    const url = getSharedApiUrl();
+    const key = getSharedApiKey();
     if (url) document.getElementById('needle-api-url').value = url;
     if (key) document.getElementById('needle-api-key').value = key;
 
@@ -168,6 +190,8 @@ const NeedleTest = (() => {
       }
       document.getElementById('needle-text').value = settings.needle || '';
       document.getElementById('needle-question').value = settings.question || '';
+      document.getElementById('needle-expected-answer').value = settings.expectedAnswer || '';
+      document.getElementById('needle-scoring-mode').value = settings.scoringMode || 'keyword';
       document.getElementById('needle-ctx-min').value = settings.ctxMin ?? 1000;
       document.getElementById('needle-ctx-max').value = settings.ctxMax ?? 8000;
       document.getElementById('needle-ctx-intervals').value = settings.ctxIntervals ?? 5;
@@ -186,6 +210,9 @@ const NeedleTest = (() => {
     if (!document.getElementById('needle-question').value) {
       document.getElementById('needle-question').value = defaultQuestion;
     }
+    if (!document.getElementById('needle-scoring-mode').value) {
+      document.getElementById('needle-scoring-mode').value = 'keyword';
+    }
 
     saveNeedleSettings();
     updatePresetIndicators();
@@ -199,6 +226,8 @@ const NeedleTest = (() => {
       requestType: document.getElementById('needle-request-type').value === 'stream' ? 'stream' : 'nonstream',
       needle: document.getElementById('needle-text').value,
       question: document.getElementById('needle-question').value,
+      expectedAnswer: document.getElementById('needle-expected-answer').value,
+      scoringMode: document.getElementById('needle-scoring-mode').value || 'keyword',
       ctxMin: parseInt(document.getElementById('needle-ctx-min').value, 10) || 1000,
       ctxMax: parseInt(document.getElementById('needle-ctx-max').value, 10) || 8000,
       ctxIntervals: Math.max(0, parseInt(document.getElementById('needle-ctx-intervals').value, 10) || 5),
@@ -215,6 +244,8 @@ const NeedleTest = (() => {
       requestType: document.getElementById('needle-request-type')?.value === 'stream' ? 'stream' : 'nonstream',
       needle: document.getElementById('needle-text')?.value || '',
       question: document.getElementById('needle-question')?.value || '',
+      expectedAnswer: document.getElementById('needle-expected-answer')?.value || '',
+      scoringMode: document.getElementById('needle-scoring-mode')?.value || 'keyword',
       ctxMin: parseInt(document.getElementById('needle-ctx-min')?.value, 10) || 1000,
       ctxMax: parseInt(document.getElementById('needle-ctx-max')?.value, 10) || 8000,
       ctxIntervals: Math.max(0, parseInt(document.getElementById('needle-ctx-intervals')?.value, 10) || 5),
@@ -226,8 +257,8 @@ const NeedleTest = (() => {
 
   function applyGpt54AuthenticityPreset() {
     const preset = GPT54_AUTH_PRESET;
-    const apiUrl = loadConfig('apiUrl', '');
-    const apiKey = loadConfig('apiKey', '');
+    const apiUrl = getSharedApiUrl();
+    const apiKey = getSharedApiKey();
     const apiUrlInput = document.getElementById('needle-api-url');
     const apiKeyInput = document.getElementById('needle-api-key');
     const modelInput = document.getElementById('needle-model');
@@ -235,6 +266,8 @@ const NeedleTest = (() => {
     const requestTypeSelect = document.getElementById('needle-request-type');
     const needleInput = document.getElementById('needle-text');
     const questionInput = document.getElementById('needle-question');
+    const expectedAnswerInput = document.getElementById('needle-expected-answer');
+    const scoringModeSelect = document.getElementById('needle-scoring-mode');
 
     if (apiUrlInput && !apiUrlInput.value && apiUrl) apiUrlInput.value = apiUrl;
     if (apiKeyInput && !apiKeyInput.value && apiKey) apiKeyInput.value = apiKey;
@@ -246,6 +279,8 @@ const NeedleTest = (() => {
     if (requestTypeSelect) requestTypeSelect.value = preset.requestType;
     if (needleInput) needleInput.value = preset.needle;
     if (questionInput) questionInput.value = preset.question;
+    if (expectedAnswerInput) expectedAnswerInput.value = preset.expectedAnswer;
+    if (scoringModeSelect) scoringModeSelect.value = preset.scoringMode;
 
     document.getElementById('needle-ctx-min').value = preset.ctxMin;
     document.getElementById('needle-ctx-max').value = preset.ctxMax;
@@ -308,6 +343,8 @@ const NeedleTest = (() => {
     return settings.mode === 'openai'
       && isGpt54FamilyModel(settings.model)
       && settings.requestType === 'nonstream'
+      && settings.scoringMode === 'exact'
+      && normalizeTextForPreset(settings.expectedAnswer) === normalizeTextForPreset(GPT54_AUTH_PRESET.expectedAnswer)
       && contextLengths.length === 2
       && contextLengths[0] === 128000
       && contextLengths[1] === 256000
@@ -342,12 +379,12 @@ const NeedleTest = (() => {
     if (presetNote) {
       if (isExactGpt54Preset(settings)) {
         presetNote.textContent = getCurrentLang() === 'en'
-          ? 'Loaded GPT-5.4 authenticity preset: OpenAI / gpt-5.4 / 128k→256k / depths 10%-90%, for 6 live retrieval checks.'
-          : '当前已载入 GPT-5.4 验真预设：OpenAI / gpt-5.4 / 128k→256k / 深度 10%-90%，共 6 组真实检索请求。';
+          ? 'Loaded GPT-5.4 authenticity preset: OpenAI / gpt-5.4 / 128k→256k / depths 10%-90% with exact-match scoring, for 6 live retrieval checks.'
+          : '当前已载入 GPT-5.4 验真预设：OpenAI / gpt-5.4 / 128k→256k / 深度 10%-90%，并启用完全匹配评分，共 6 组真实检索请求。';
       } else {
         presetNote.textContent = getCurrentLang() === 'en'
-          ? 'The GPT-5.4 authenticity preset auto-fills OpenAI / gpt-5.4 / 128k→256k / depths 10%-90% for a low-cost long-context cross-check.'
-          : 'GPT-5.4 验真预设会自动填入 OpenAI / gpt-5.4 / 128k→256k / 深度 10%-90% 的低成本长上下文复核矩阵。';
+          ? 'The GPT-5.4 authenticity preset auto-fills OpenAI / gpt-5.4 / 128k→256k / depths 10%-90% with exact-match scoring for a low-cost long-context cross-check.'
+          : 'GPT-5.4 验真预设会自动填入 OpenAI / gpt-5.4 / 128k→256k / 深度 10%-90%，并启用完全匹配评分，形成低成本长上下文复核矩阵。';
       }
     }
   }
@@ -482,41 +519,58 @@ const NeedleTest = (() => {
 
   function buildRunIntroSummary({ totalTests, model, requestType, contextLengths, depths, mode }) {
     const isGpt54Check = mode === 'openai' && isGpt54FamilyModel(model) && contextLengths.some((value) => value >= 128000);
+    const scoringText = getScoringModeLabel(getCurrentSettings().scoringMode || 'keyword');
     if (isGpt54Check) {
       return getCurrentLang() === 'en'
-        ? `GPT-5.4 long-context cross-check: ${totalTests} live requests, contexts ${contextLengths.join(' / ')} tokens, depths ${depths.join(' / ')}%, ${requestType === 'stream' ? 'stream' : 'non-stream'} mode.`
-        : `GPT-5.4 长上下文复核：共 ${totalTests} 个真实请求，上下文 ${contextLengths.join(' / ')} tokens，深度 ${depths.join(' / ')}%，调用方式为 ${requestType === 'stream' ? '流式' : '非流式'}。`;
+        ? `GPT-5.4 long-context cross-check: ${totalTests} live requests, contexts ${contextLengths.join(' / ')} tokens, depths ${depths.join(' / ')}%, ${requestType === 'stream' ? 'stream' : 'non-stream'} mode, scoring ${scoringText}.`
+        : `GPT-5.4 长上下文复核：共 ${totalTests} 个真实请求，上下文 ${contextLengths.join(' / ')} tokens，深度 ${depths.join(' / ')}%，调用方式为 ${requestType === 'stream' ? '流式' : '非流式'}，评分方式为 ${scoringText}。`;
     }
 
     return getCurrentLang() === 'en'
-      ? `This run will execute ${totalTests} cases using model ${model} in ${requestType === 'stream' ? 'stream' : 'non-stream'} mode.`
-      : `本次测试将执行 ${totalTests} 组组合，模型为 ${model}，调用方式为 ${requestType === 'stream' ? '流式调用' : '非流式调用'}。`;
+      ? `This run will execute ${totalTests} cases using model ${model} in ${requestType === 'stream' ? 'stream' : 'non-stream'} mode with ${scoringText} scoring.`
+      : `本次测试将执行 ${totalTests} 组组合，模型为 ${model}，调用方式为 ${requestType === 'stream' ? '流式调用' : '非流式调用'}，评分方式为 ${scoringText}。`;
   }
 
   function buildRunCompletionSummary({ avgScore, successCount, totalTests, model, mode }) {
     const gpt54Summary = buildGpt54NeedleSummary(results, latestMatrix);
+    const corpusCapNote = buildCorpusCapNote(results);
     if (gpt54Summary && mode === 'openai' && isGpt54FamilyModel(model)) {
       return getCurrentLang() === 'en'
-        ? `${gpt54Summary.verdictLabel} · ${gpt54Summary.summaryText} Export the heatmap/CSV if you need to compare this relay against the official GPT-5.4 endpoint.`
-        : `${gpt54Summary.verdictLabel} · ${gpt54Summary.summaryText} 如需和 OpenAI 官方 GPT-5.4 对照，可继续导出热力图与 CSV。`;
+        ? `${gpt54Summary.verdictLabel} · ${gpt54Summary.summaryText}${corpusCapNote} Export the heatmap/CSV if you need to compare this relay against the official GPT-5.4 endpoint.`
+        : `${gpt54Summary.verdictLabel} · ${gpt54Summary.summaryText}${corpusCapNote} 如需和 OpenAI 官方 GPT-5.4 对照，可继续导出热力图与 CSV。`;
     }
 
     return getCurrentLang() === 'en'
-      ? `Test completed: ${successCount}/${totalTests} cases succeeded, average retrieval score ${avgScore}%. Heatmap PNG and CSV remain available for export.`
-      : `测试完成：成功 ${successCount}/${totalTests} 组，平均检索得分 ${avgScore}% 。热力图可导出为 PNG，结果表可导出为 CSV。`;
+      ? `Test completed: ${successCount}/${totalTests} cases succeeded, average retrieval score ${avgScore}%.${corpusCapNote} Heatmap PNG and CSV remain available for export.`
+      : `测试完成：成功 ${successCount}/${totalTests} 组，平均检索得分 ${avgScore}% 。${corpusCapNote}热力图可导出为 PNG，结果表可导出为 CSV。`;
   }
 
   function buildStoppedSummary({ completed, totalTests, avgScore }) {
     const gpt54Summary = buildGpt54NeedleSummary(results, latestMatrix);
+    const corpusCapNote = buildCorpusCapNote(results);
     if (gpt54Summary) {
       return getCurrentLang() === 'en'
-        ? `Run stopped manually at ${completed}/${totalTests}. Current GPT-5.4 long-context cross-check snapshot: ${gpt54Summary.verdictLabel}, average ${avgScore}%.`
-        : `测试已手动停止：已完成 ${completed}/${totalTests} 组。当前 GPT-5.4 长上下文复核快照为 ${gpt54Summary.verdictLabel}，平均得分 ${avgScore}%。`;
+        ? `Run stopped manually at ${completed}/${totalTests}. Current GPT-5.4 long-context cross-check snapshot: ${gpt54Summary.verdictLabel}, average ${avgScore}%.${corpusCapNote}`
+        : `测试已手动停止：已完成 ${completed}/${totalTests} 组。当前 GPT-5.4 长上下文复核快照为 ${gpt54Summary.verdictLabel}，平均得分 ${avgScore}%。${corpusCapNote}`;
     }
 
     return getCurrentLang() === 'en'
-      ? `Run stopped manually. Completed ${completed}/${totalTests} cases, average score ${avgScore}%. Existing heatmap and CSV exports remain available.`
-      : `测试已手动停止：已完成 ${completed}/${totalTests} 组，当前平均检索得分 ${avgScore}% 。已生成的热力图和 CSV 仍可导出。`;
+      ? `Run stopped manually. Completed ${completed}/${totalTests} cases, average score ${avgScore}%.${corpusCapNote} Existing heatmap and CSV exports remain available.`
+      : `测试已手动停止：已完成 ${completed}/${totalTests} 组，当前平均检索得分 ${avgScore}% 。${corpusCapNote}已生成的热力图和 CSV 仍可导出。`;
+  }
+
+  function buildCorpusCapNote(testResults = results) {
+    const cappedItems = Array.isArray(testResults)
+      ? testResults.filter((item) => item?.contextLimited)
+      : [];
+    if (cappedItems.length === 0) return '';
+
+    const maxEstimatedTokens = cappedItems.reduce((max, item) =>
+      Math.max(max, Number(item?.actualHaystackTokens) || Number(item?.contextLength) || 0), 0);
+
+    return getCurrentLang() === 'en'
+      ? ` ${cappedItems.length} case(s) hit the local haystack capacity cap; actual haystack length peaked around ${maxEstimatedTokens} tokens.`
+      : ` 其中 ${cappedItems.length} 组触发了本地语料容量上限，实际可构造的 haystack 长度最高约 ${maxEstimatedTokens} tokens。`;
   }
 
   async function runNeedleTest() {
@@ -527,6 +581,8 @@ const NeedleTest = (() => {
     const requestType = document.getElementById('needle-request-type').value === 'stream' ? 'stream' : 'nonstream';
     const needle = document.getElementById('needle-text').value.trim();
     const question = document.getElementById('needle-question').value.trim();
+    const expectedAnswer = document.getElementById('needle-expected-answer').value.trim();
+    const scoringMode = document.getElementById('needle-scoring-mode').value || 'keyword';
     const ctxMin = parseInt(document.getElementById('needle-ctx-min').value, 10) || 1000;
     const ctxMax = parseInt(document.getElementById('needle-ctx-max').value, 10) || 8000;
     const ctxIntervals = Math.max(0, parseInt(document.getElementById('needle-ctx-intervals').value, 10) || 5);
@@ -535,11 +591,15 @@ const NeedleTest = (() => {
     const depthIntervals = Math.max(0, parseInt(document.getElementById('needle-depth-intervals').value, 10) || 5);
 
     if (!apiUrl || !apiKey || !model) {
-      alert('请填写 API 地址、Key 和模型名');
+      alert(getCurrentLang() === 'en' ? 'Please fill in the API URL, API key, and model name.' : '请填写 API 地址、Key 和模型名');
       return;
     }
     if (!needle || !question) {
-      alert('请填写 Needle 和检索问题');
+      alert(getCurrentLang() === 'en' ? 'Please fill in the needle and the retrieval question.' : '请填写 Needle 和检索问题');
+      return;
+    }
+    if (['exact', 'contains', 'regex'].includes(scoringMode) && !expectedAnswer) {
+      alert(getCurrentLang() === 'en' ? 'This scoring mode requires an expected answer or regex pattern.' : '当前评分方式需要填写参考答案或正则表达式。');
       return;
     }
 
@@ -631,19 +691,35 @@ const NeedleTest = (() => {
               requestType,
               needle,
               question,
+              expectedAnswer,
+              scoringMode,
               contextLength: ctx,
               depthPercent: depth,
             }),
           });
           const data = await resp.json();
+          const contextMetrics = data.contextMetrics || {};
+          const scoring = data.scoring || {};
 
           results.push({
             contextLength: ctx,
+            requestedContextTokens: contextMetrics.requestedTokens || ctx,
+            actualHaystackTokens: contextMetrics.actualHaystackTokens || contextMetrics.estimatedContextTokens || ctx,
+            actualContextTokens: contextMetrics.actualContextTokens || contextMetrics.estimatedContextTokens || ctx,
+            actualPromptTokens: contextMetrics.actualPromptTokens || contextMetrics.estimatedPromptTokens || 0,
+            tokenizerLabel: contextMetrics.tokenizerLabel || '',
+            datasetActualMaxTokens: contextMetrics.datasetActualMaxTokens || contextMetrics.datasetEstimatedMaxTokens || 0,
+            datasetEstimatedMaxTokens: contextMetrics.datasetEstimatedMaxTokens || 0,
+            contextLimited: Boolean(contextMetrics.hitCorpusCapacity),
             depthPercent: depth,
             retrievalScore: data.ok ? data.retrievalScore : 0,
             latencyMs: data.latencyMs || 0,
             ok: data.ok,
             error: data.error || '',
+            scoringMode: scoring.mode || scoringMode,
+            scoringPass: Boolean(scoring.pass),
+            scoringDetail: scoring.detail || '',
+            expectedAnswer,
             mode,
             requestType: data.requestType || requestType,
             model,
@@ -657,11 +733,23 @@ const NeedleTest = (() => {
 
           results.push({
             contextLength: ctx,
+            requestedContextTokens: ctx,
+            actualHaystackTokens: ctx,
+            actualContextTokens: ctx,
+            actualPromptTokens: 0,
+            tokenizerLabel: '',
+            datasetActualMaxTokens: 0,
+            datasetEstimatedMaxTokens: 0,
+            contextLimited: false,
             depthPercent: depth,
             retrievalScore: 0,
             latencyMs: 0,
             ok: false,
             error: err.message,
+            scoringMode,
+            scoringPass: false,
+            scoringDetail: err.message,
+            expectedAnswer,
             mode,
             requestType,
             model,
@@ -950,13 +1038,22 @@ const NeedleTest = (() => {
 
     tbody.innerHTML = results.map((r) => {
       const scoreClassName = r.retrievalScore >= 80 ? 'high' : r.retrievalScore >= 50 ? 'mid' : 'low';
+      const requestedTokens = r.requestedContextTokens || r.contextLength;
+      const actualTokens = r.actualHaystackTokens || r.actualContextTokens || r.contextLength;
+      const contextNote = r.contextLimited ? ' ⚠' : '';
+      const contextTitle = [r.tokenizerLabel, r.scoringDetail].filter(Boolean).join(' · ');
+      const statusIcon = !r.ok
+        ? '❌'
+        : r.scoringMode === 'keyword'
+          ? (r.retrievalScore >= 100 ? '✅' : '⚠️')
+          : (r.scoringPass ? '✅' : '⚠️');
       return `
         <tr>
-          <td>${r.contextLength}</td>
+          <td title="${escapeHtmlAttr(contextTitle)}">${requestedTokens} / ${actualTokens}${contextNote}</td>
           <td>${r.depthPercent}%</td>
           <td class="history-score ${scoreClassName}">${r.retrievalScore}%</td>
           <td>${r.latencyMs}</td>
-          <td>${r.ok ? '✅' : '❌'}</td>
+          <td title="${escapeHtmlAttr(r.scoringDetail || '')}">${statusIcon}</td>
         </tr>
       `;
     }).join('');
@@ -995,7 +1092,18 @@ const NeedleTest = (() => {
       'model',
       'mode',
       'requestType',
-      'contextLength',
+      'scoringMode',
+      'scoringPass',
+      'scoringDetail',
+      'expectedAnswer',
+      'requestedContextTokens',
+      'actualHaystackTokens',
+      'actualContextTokens',
+      'actualPromptTokens',
+      'tokenizerLabel',
+      'datasetActualMaxTokens',
+      'datasetEstimatedMaxTokens',
+      'contextLimited',
       'depthPercent',
       'retrievalScore',
       'latencyMs',
@@ -1006,7 +1114,18 @@ const NeedleTest = (() => {
       item.model,
       item.mode,
       item.requestType,
-      item.contextLength,
+      item.scoringMode || 'keyword',
+      item.scoringPass ? 'true' : 'false',
+      item.scoringDetail || '',
+      item.expectedAnswer || '',
+      item.requestedContextTokens || item.contextLength,
+      item.actualHaystackTokens || item.contextLength,
+      item.actualContextTokens || item.contextLength,
+      item.actualPromptTokens || '',
+      item.tokenizerLabel || '',
+      item.datasetActualMaxTokens || '',
+      item.datasetEstimatedMaxTokens || '',
+      item.contextLimited ? 'true' : 'false',
       item.depthPercent,
       item.retrievalScore,
       item.latencyMs,
@@ -1032,6 +1151,21 @@ const NeedleTest = (() => {
     return `apimaster-${modelPart}-${suffix}-${timePart}.${extension}`;
   }
 
+  function getScoringModeLabel(mode = 'keyword') {
+    const isEn = getCurrentLang() === 'en';
+    if (mode === 'exact') return isEn ? 'exact match' : '完全匹配';
+    if (mode === 'contains') return isEn ? 'contains answer' : '包含参考答案';
+    if (mode === 'regex') return isEn ? 'regex' : '正则匹配';
+    return isEn ? 'keyword coverage' : '关键词覆盖';
+  }
+
+  function normalizeTextForPreset(value) {
+    return String(value || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+  }
+
   function slugifyFilenamePart(value) {
     return String(value || 'item')
       .trim()
@@ -1044,6 +1178,14 @@ const NeedleTest = (() => {
   function formatExportTime(date) {
     const pad = (value) => String(value).padStart(2, '0');
     return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+  }
+
+  function escapeHtmlAttr(value) {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
   }
 
   function escapeCsvCell(value) {

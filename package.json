@@ -8,7 +8,9 @@
     "dev": "node server/index.mjs"
   },
   "dependencies": {
-    "html2canvas": "^1.4.1"
+    "@anthropic-ai/tokenizer": "^0.0.4",
+    "html2canvas": "^1.4.1",
+    "js-tiktoken": "^1.0.21"
   },
   "devDependencies": {
     "playwright": "^1.59.1"

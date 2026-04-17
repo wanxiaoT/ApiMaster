@@ -35,7 +35,7 @@
 
           <button class="nav-tab entry-card" data-tab="needle" id="tab-needle">
             <span class="entry-kicker" id="entry-needle-kicker">长上下文检索测试</span>
-            <span class="entry-title" id="entry-needle-title">进入 大海捞针 测试<br>（Neddle 测试）</span>
+            <span class="entry-title" id="entry-needle-title">进入 大海捞针 测试<br>（Needle 测试）</span>
             <span class="entry-note" id="entry-needle-note">基于上下文长度和插入深度矩阵，观察真实检索能力与衰减表现。</span>
             <span class="entry-meta" id="entry-needle-meta">适合验证长上下文召回和热力图趋势</span>
           </button>
@@ -53,7 +53,7 @@
         </div>
         <div class="kicker">Read First</div>
       </div>
-      <p class="info-copy" id="alert-text">为保障账户安全，建议优先使用测试专用 API Key。本工具纯前端 + 本地代理，不会主动上传或存储你的 API Key。</p>
+      <p class="info-copy" id="alert-text">为保障账户安全，建议优先使用测试专用 API Key。本工具不会把 API Key 持久化保存在浏览器；Key 仅在当前页面会话中使用，并会随你发起的请求发送到目标接口。</p>
     </section>
 
     <section class="page-view" id="page-detect">
@@ -131,6 +131,9 @@
               </div>
             </label>
           </div>
+          <div class="note-band">
+            <p class="info-copy" id="api-key-storage-note">默认不记住 API Key，刷新页面后需要重新输入。</p>
+          </div>
         </section>
 
         <div class="stack">
@@ -159,6 +162,14 @@
               <select id="detect-request-type" class="input select plain-input">
                 <option value="nonstream" id="option-detect-nonstream">非流式调用</option>
                 <option value="stream" id="option-detect-stream">流式调用</option>
+              </select>
+            </label>
+
+            <label class="field field-input single-field">
+              <span id="label-detect-analysis-depth">检测深度</span>
+              <select id="detect-analysis-depth" class="input select plain-input">
+                <option value="deep" id="option-detect-analysis-deep">深度检测（含来源/画像探针）</option>
+                <option value="quick" id="option-detect-analysis-quick">快速检测（仅主请求评分）</option>
               </select>
             </label>
 
@@ -531,6 +542,24 @@
                 placeholder="What is the best thing to do in San Francisco?" autocomplete="off">
             </label>
 
+            <div class="field-grid compact-grid">
+              <label class="field field-input">
+                <span id="label-needle-expected-answer">参考答案 / 正则</span>
+                <input type="text" id="needle-expected-answer" class="input plain-input"
+                  placeholder="可留空，关键词模式下默认使用 Needle 本文" autocomplete="off">
+              </label>
+              <label class="field field-input">
+                <span id="label-needle-scoring-mode">评分方式</span>
+                <select id="needle-scoring-mode" class="input select plain-input">
+                  <option value="keyword" id="option-needle-score-keyword">关键词覆盖</option>
+                  <option value="exact" id="option-needle-score-exact">完全匹配</option>
+                  <option value="contains" id="option-needle-score-contains">包含参考答案</option>
+                  <option value="regex" id="option-needle-score-regex">正则匹配</option>
+                </select>
+              </label>
+            </div>
+            <div class="note-band" id="needle-scoring-note">关键词模式会默认从参考答案中提取关键词；若参考答案留空，则回退使用 Needle 文本。</div>
+
             <div class="field-grid compact-grid triple-grid">
               <label class="field field-input">
                 <span>最小上下文长度 (tokens)</span>
@@ -671,11 +700,11 @@
           <table class="needle-results-table" id="needle-results-table">
             <thead>
               <tr>
-                <th>上下文长度</th>
-                <th>深度 (%)</th>
-                <th>检索得分</th>
-                <th>延迟 (ms)</th>
-                <th>状态</th>
+                <th id="needle-context-header">上下文（请求 / 实际）</th>
+                <th id="needle-depth-header">深度 (%)</th>
+                <th id="needle-score-header">检索得分</th>
+                <th id="needle-latency-header">延迟 (ms)</th>
+                <th id="needle-status-header">状态</th>
               </tr>
             </thead>
             <tbody id="needle-results-tbody"></tbody>
