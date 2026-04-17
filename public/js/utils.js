@@ -202,6 +202,213 @@ function canvasToBlob(canvas, type = 'image/png') {
   });
 }
 
+function isTransparentColor(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return !normalized
+    || normalized === 'transparent'
+    || normalized === 'rgba(0, 0, 0, 0)'
+    || normalized === 'rgba(0,0,0,0)';
+}
+
+function resolveCaptureBackgroundColor(node, explicitBackgroundColor) {
+  if (explicitBackgroundColor === null) {
+    return null;
+  }
+
+  if (typeof explicitBackgroundColor === 'string' && explicitBackgroundColor.trim()) {
+    return explicitBackgroundColor;
+  }
+
+  let current = node;
+  while (current instanceof Element) {
+    const color = window.getComputedStyle(current).backgroundColor;
+    if (!isTransparentColor(color)) {
+      return color;
+    }
+    current = current.parentElement;
+  }
+
+  const bodyColor = document.body ? window.getComputedStyle(document.body).backgroundColor : '';
+  if (!isTransparentColor(bodyColor)) {
+    return bodyColor;
+  }
+
+  return '#ffffff';
+}
+
+function resolveCaptureScale(options = {}) {
+  const requested = Number(options.scale);
+  if (Number.isFinite(requested) && requested > 0) {
+    return requested;
+  }
+
+  const deviceScale = Number(window.devicePixelRatio) || 1;
+  return Math.min(3, Math.max(2, deviceScale));
+}
+
+function stabilizeCaptureCloneTree(root) {
+  if (!(root instanceof Element)) {
+    return;
+  }
+
+  [root, ...root.querySelectorAll('*')].forEach((node) => {
+    if (!(node instanceof HTMLElement) && !(node instanceof SVGElement)) {
+      return;
+    }
+
+    node.style.setProperty('animation', 'none', 'important');
+    node.style.setProperty('transition', 'none', 'important');
+    node.style.setProperty('caret-color', 'transparent', 'important');
+  });
+}
+
+function isCanvasLikelyBlank(canvas) {
+  if (!(canvas instanceof HTMLCanvasElement) || canvas.width < 1 || canvas.height < 1) {
+    return true;
+  }
+
+  const sampleCanvas = document.createElement('canvas');
+  sampleCanvas.width = Math.max(16, Math.min(64, canvas.width));
+  sampleCanvas.height = Math.max(16, Math.min(64, canvas.height));
+
+  const sampleContext = sampleCanvas.getContext('2d', { willReadFrequently: true });
+  if (!sampleContext) {
+    return false;
+  }
+
+  sampleContext.imageSmoothingEnabled = true;
+  if ('imageSmoothingQuality' in sampleContext) {
+    sampleContext.imageSmoothingQuality = 'high';
+  }
+  sampleContext.drawImage(canvas, 0, 0, sampleCanvas.width, sampleCanvas.height);
+
+  const imageData = sampleContext.getImageData(0, 0, sampleCanvas.width, sampleCanvas.height).data;
+  const totalPixels = sampleCanvas.width * sampleCanvas.height;
+
+  let visiblePixels = 0;
+  let darkishPixels = 0;
+  let coloredPixels = 0;
+  let minLuma = 255;
+  let maxLuma = 0;
+  let sumLuma = 0;
+  let sumLumaSquared = 0;
+
+  for (let i = 0; i < imageData.length; i += 4) {
+    const r = imageData[i];
+    const g = imageData[i + 1];
+    const b = imageData[i + 2];
+    const a = imageData[i + 3];
+
+    if (a < 8) {
+      continue;
+    }
+
+    visiblePixels += 1;
+    const luma = (r * 299 + g * 587 + b * 114) / 1000;
+    const chroma = Math.max(r, g, b) - Math.min(r, g, b);
+
+    minLuma = Math.min(minLuma, luma);
+    maxLuma = Math.max(maxLuma, luma);
+    sumLuma += luma;
+    sumLumaSquared += luma * luma;
+
+    if (luma < 245) {
+      darkishPixels += 1;
+    }
+    if (chroma > 10) {
+      coloredPixels += 1;
+    }
+  }
+
+  if (visiblePixels === 0) {
+    return true;
+  }
+
+  const meanLuma = sumLuma / visiblePixels;
+  const variance = Math.max(0, (sumLumaSquared / visiblePixels) - (meanLuma * meanLuma));
+  const visibleRatio = visiblePixels / totalPixels;
+  const darkishRatio = darkishPixels / totalPixels;
+  const coloredRatio = coloredPixels / totalPixels;
+
+  return visibleRatio > 0.98
+    && darkishRatio < 0.003
+    && coloredRatio < 0.003
+    && (maxLuma - minLuma) < 8
+    && variance < 12;
+}
+
+function assertCanvasHasVisibleContent(canvas, options = {}) {
+  if (!options.validateNotBlank) {
+    return;
+  }
+
+  if (isCanvasLikelyBlank(canvas)) {
+    throw new Error('capture_blank_output');
+  }
+}
+
+function normalizeWashedCanvasIfNeeded(canvas) {
+  if (!(canvas instanceof HTMLCanvasElement) || canvas.width < 1 || canvas.height < 1) {
+    return false;
+  }
+
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) {
+    return false;
+  }
+
+  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imageData.data;
+
+  let visiblePixels = 0;
+  let minLuma = 255;
+  let maxLuma = 0;
+  let sumLuma = 0;
+
+  for (let i = 0; i < data.length; i += 4) {
+    const alpha = data[i + 3];
+    if (alpha < 8) {
+      continue;
+    }
+
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const luma = (r * 299 + g * 587 + b * 114) / 1000;
+
+    visiblePixels += 1;
+    minLuma = Math.min(minLuma, luma);
+    maxLuma = Math.max(maxLuma, luma);
+    sumLuma += luma;
+  }
+
+  if (visiblePixels < 64) {
+    return false;
+  }
+
+  const meanLuma = sumLuma / visiblePixels;
+  const shouldNormalize = meanLuma > 238 && minLuma > 52 && maxLuma > 180;
+  if (!shouldNormalize) {
+    return false;
+  }
+
+  const blackPoint = Math.round(Math.min(104, Math.max(72, minLuma - 12)));
+  const scale = 255 / Math.max(1, 255 - blackPoint);
+
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] < 8) {
+      continue;
+    }
+
+    data[i] = Math.max(0, Math.min(255, Math.round((data[i] - blackPoint) * scale)));
+    data[i + 1] = Math.max(0, Math.min(255, Math.round((data[i + 1] - blackPoint) * scale)));
+    data[i + 2] = Math.max(0, Math.min(255, Math.round((data[i + 2] - blackPoint) * scale)));
+  }
+
+  context.putImageData(imageData, 0, 0);
+  return true;
+}
+
 async function renderNodeToPngBlobWithHtml2Canvas(node, options = {}) {
   if (!(node instanceof Element)) {
     throw new Error('invalid_capture_target');
@@ -210,8 +417,8 @@ async function renderNodeToPngBlobWithHtml2Canvas(node, options = {}) {
   const rect = node.getBoundingClientRect();
   const width = Math.max(1, Math.ceil(rect.width));
   const height = Math.max(1, Math.ceil(rect.height));
-  const scale = Math.max(1, Number(options.scale) || 2);
-  const backgroundColor = options.backgroundColor || '#ffffff';
+  const scale = resolveCaptureScale(options);
+  const backgroundColor = resolveCaptureBackgroundColor(node, options.backgroundColor);
   const captureAttr = 'data-apimaster-capture-id';
   const captureId = `capture-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const previousCaptureId = node.getAttribute(captureAttr);
@@ -225,6 +432,7 @@ async function renderNodeToPngBlobWithHtml2Canvas(node, options = {}) {
 
     const canvas = await window.html2canvas(node, {
       backgroundColor,
+      foreignObjectRendering: options.html2canvasForeignObjectRendering === true,
       scale,
       useCORS: true,
       logging: false,
@@ -243,10 +451,13 @@ async function renderNodeToPngBlobWithHtml2Canvas(node, options = {}) {
           throw new Error('capture_clone_target_missing');
         }
 
+        stabilizeCaptureCloneTree(clonedNode);
         options.onClone(clonedNode, clonedDocument);
       },
     });
 
+    normalizeWashedCanvasIfNeeded(canvas);
+    assertCanvasHasVisibleContent(canvas, options);
     return await canvasToBlob(canvas);
   } finally {
     if (previousCaptureId === null) {
@@ -265,11 +476,12 @@ async function renderNodeToPngBlobWithForeignObject(node, options = {}) {
   const rect = node.getBoundingClientRect();
   const width = Math.max(1, Math.ceil(rect.width));
   const height = Math.max(1, Math.ceil(rect.height));
-  const scale = Math.max(1, Number(options.scale) || 2);
-  const backgroundColor = options.backgroundColor || '#ffffff';
+  const scale = resolveCaptureScale(options);
+  const backgroundColor = resolveCaptureBackgroundColor(node, options.backgroundColor);
 
   const clone = node.cloneNode(true);
   copyComputedStylesRecursive(node, clone);
+  stabilizeCaptureCloneTree(clone);
 
   if (typeof options.onClone === 'function') {
     options.onClone(clone);
@@ -284,13 +496,14 @@ async function renderNodeToPngBlobWithForeignObject(node, options = {}) {
   wrapper.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
   wrapper.style.width = `${width}px`;
   wrapper.style.height = `${height}px`;
-  wrapper.style.background = backgroundColor;
+  wrapper.style.background = backgroundColor || 'transparent';
   wrapper.style.boxSizing = 'border-box';
+  wrapper.style.display = 'block';
   wrapper.appendChild(clone);
 
   const serialized = new XMLSerializer().serializeToString(wrapper);
   const svgMarkup = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="${width * scale}" height="${height * scale}" viewBox="0 0 ${width} ${height}">
+    <svg xmlns="http://www.w3.org/2000/svg" width="${width * scale}" height="${height * scale}" viewBox="0 0 ${width} ${height}" shape-rendering="geometricPrecision" text-rendering="geometricPrecision">
       <foreignObject x="0" y="0" width="100%" height="100%">${serialized}</foreignObject>
     </svg>
   `;
@@ -315,9 +528,18 @@ async function renderNodeToPngBlobWithForeignObject(node, options = {}) {
       throw new Error('canvas_context_unavailable');
     }
 
-    context.fillStyle = backgroundColor;
-    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.imageSmoothingEnabled = true;
+    if ('imageSmoothingQuality' in context) {
+      context.imageSmoothingQuality = 'high';
+    }
+
+    if (backgroundColor) {
+      context.fillStyle = backgroundColor;
+      context.fillRect(0, 0, canvas.width, canvas.height);
+    }
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    normalizeWashedCanvasIfNeeded(canvas);
+    assertCanvasHasVisibleContent(canvas, options);
     return await canvasToBlob(canvas);
   } finally {
     URL.revokeObjectURL(svgUrl);
@@ -330,24 +552,29 @@ async function renderNodeToPngBlob(node, options = {}) {
   }
 
   const errors = [];
+  const rendererOrder = options.preferForeignObject
+    ? ['foreignObject', 'html2canvas']
+    : ['html2canvas', 'foreignObject'];
 
-  if (typeof window.html2canvas === 'function') {
+  for (const renderer of rendererOrder) {
     try {
-      return await renderNodeToPngBlobWithHtml2Canvas(node, options);
+      if (renderer === 'html2canvas') {
+        if (typeof window.html2canvas !== 'function') {
+          throw new Error('capture_renderer_unavailable');
+        }
+        return await renderNodeToPngBlobWithHtml2Canvas(node, options);
+      }
+
+      return await renderNodeToPngBlobWithForeignObject(node, options);
     } catch (error) {
       errors.push(error);
-      console.warn('html2canvas capture failed, falling back to foreignObject capture:', error);
+      console.warn(`${renderer} capture failed${renderer === rendererOrder[rendererOrder.length - 1] ? '' : ', trying next renderer'}:`, error);
     }
   }
 
-  try {
-    return await renderNodeToPngBlobWithForeignObject(node, options);
-  } catch (error) {
-    errors.push(error);
-    const finalError = new Error(errors.map((item) => item?.message || String(item)).join(' | ') || 'capture_failed');
-    finalError.causes = errors;
-    throw finalError;
-  }
+  const finalError = new Error(errors.map((item) => item?.message || String(item)).join(' | ') || 'capture_failed');
+  finalError.causes = errors;
+  throw finalError;
 }
 
 async function copyImageBlobToClipboard(blob) {

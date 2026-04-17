@@ -1298,10 +1298,54 @@ const ApiDetect = (() => {
       throw new Error('result_section_not_found');
     }
 
+    await waitForElementCaptureReady(section);
+
     return await renderNodeToPngBlob(section, {
-      scale: 2,
-      backgroundColor: '#ffffff',
+      scale: Number(window.devicePixelRatio) || 1,
+      preferForeignObject: false,
+      validateNotBlank: true,
     });
+  }
+
+  function isCaptureReadyTransform(value) {
+    const normalized = String(value || '').trim();
+    return !normalized
+      || normalized === 'none'
+      || normalized === 'matrix(1, 0, 0, 1, 0, 0)'
+      || normalized === 'matrix(1,0,0,1,0,0)';
+  }
+
+  async function waitForElementCaptureReady(element, timeoutMs = 900) {
+    if (!(element instanceof Element)) {
+      return;
+    }
+
+    const waitMs = Math.max(120, Number(timeoutMs) || 900);
+    const animationDeadline = performance.now() + Math.min(waitMs, 600);
+
+    if (typeof element.getAnimations === 'function') {
+      const animations = element.getAnimations({ subtree: false })
+        .filter((animation) => animation.playState === 'running' || animation.playState === 'pending');
+
+      if (animations.length > 0) {
+        await Promise.race([
+          Promise.allSettled(animations.map((animation) => animation.finished)),
+          new Promise((resolve) => setTimeout(resolve, Math.max(120, Math.min(waitMs, 500)))),
+        ]);
+      }
+    }
+
+    while (performance.now() < animationDeadline) {
+      const style = window.getComputedStyle(element);
+      const opacity = Number(style.opacity);
+      if ((Number.isNaN(opacity) || opacity >= 0.995) && isCaptureReadyTransform(style.transform)) {
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        return;
+      }
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    }
+
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   }
 
   function buildDetectExportFilename(suffix, extension) {
