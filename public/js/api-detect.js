@@ -89,6 +89,12 @@ const ApiDetect = (() => {
       : (running ? '扫描中...' : '扫描常见模型');
   }
 
+  function getToggleResponseLabel(visible = false) {
+    return getUiLang() === 'en'
+      ? (visible ? 'Hide Response' : 'Show Response')
+      : (visible ? '隐藏响应内容' : '显示响应内容');
+  }
+
   function getResultExportTexts() {
     return getUiLang() === 'en'
       ? {
@@ -234,6 +240,7 @@ const ApiDetect = (() => {
     const sourceTitle = document.getElementById('source-title');
     const evidenceTitle = document.getElementById('source-evidence-title');
     const scanTitle = document.getElementById('scan-title');
+    const addCardText = document.querySelector('.add-card-text');
 
     const detectText = document.getElementById('btn-detect-text');
     if (detectText) detectText.textContent = getDetectButtonLabel(isDetectionRunning);
@@ -250,12 +257,14 @@ const ApiDetect = (() => {
     if (scanTitle) scanTitle.textContent = mode === 'anthropic'
       ? (isEn ? 'Multi-model Source Scan' : '多模型来源扫描')
       : (isEn ? 'Multi-model Upstream Profiles' : '多模型接口画像');
+    if (addCardText) addCardText.textContent = isEn ? 'Custom' : '自定义';
 
     applySourceFactLabels(getDefaultSourceFactLabels(mode));
     updateDetectRunNote(mode, getAnalysisDepth());
     updateResultExportButtonTexts();
     syncActionButtons();
     updateResultExportButtons();
+    renderHistory();
   }
 
   /* ── Provider Dropdown ── */
@@ -276,7 +285,7 @@ const ApiDetect = (() => {
       `).join('');
 
       if (filtered.length === 0) {
-        dropdown.innerHTML = '<div style="padding:12px 16px;font-size:13px;color:var(--text-muted)">未找到匹配的服务商</div>';
+        dropdown.innerHTML = `<div style="padding:12px 16px;font-size:13px;color:var(--text-muted)">${getUiLang() === 'en' ? 'No matching providers found' : '未找到匹配的服务商'}</div>`;
       }
     }
 
@@ -350,7 +359,7 @@ const ApiDetect = (() => {
       `).join('') + `
         <button class="model-card add-card" id="btn-add-model">
           <div class="add-card-icon">＋</div>
-          <div class="add-card-text">自定义</div>
+          <div class="add-card-text">${getUiLang() === 'en' ? 'Custom' : '自定义'}</div>
         </button>
       `;
 
@@ -373,12 +382,18 @@ const ApiDetect = (() => {
       const addBtn = document.getElementById('btn-add-model');
       if (addBtn) {
         addBtn.addEventListener('click', () => {
-          const name = prompt('模型显示名称:', '自定义模型');
+          const name = prompt(
+            getUiLang() === 'en' ? 'Display name:' : '模型显示名称:',
+            getUiLang() === 'en' ? 'Custom Model' : '自定义模型'
+          );
           if (!name) return;
-          const id = prompt('模型ID (实际发送的名称):', '');
+          const id = prompt(
+            getUiLang() === 'en' ? 'Model ID (actual request name):' : '模型ID (实际发送的名称):',
+            ''
+          );
           if (!id) return;
           const customs = loadConfig('customModels', []);
-          customs.push({ name, id, provider: '自定义' });
+          customs.push({ name, id, provider: getUiLang() === 'en' ? 'Custom' : '自定义' });
           saveConfig('customModels', customs);
           selectedIdx = PRESET_MODELS.length + customs.length - 1;
           saveConfig('selectedModel', selectedIdx);
@@ -626,15 +641,15 @@ const ApiDetect = (() => {
     const withThinking = document.getElementById('with-thinking')?.checked ?? true;
 
     if (!apiUrl) {
-      alert('请输入 API 接口地址');
+      alert(getUiLang() === 'en' ? 'Please enter the API endpoint.' : '请输入 API 接口地址');
       return;
     }
     if (!apiKey) {
-      alert('请输入 API Key');
+      alert(getUiLang() === 'en' ? 'Please enter the API key.' : '请输入 API Key');
       return;
     }
     if (!modelId) {
-      alert('请输入模型名');
+      alert(getUiLang() === 'en' ? 'Please enter the model name.' : '请输入模型名');
       return;
     }
 
@@ -654,16 +669,20 @@ const ApiDetect = (() => {
       showLivePreviewState();
     }
     updateResultMeta({
-      statusText: '检测中',
+      statusText: getUiLang() === 'en' ? 'Detecting' : '检测中',
       modelId,
       apiUrl,
       summaryCopy: requestType === 'stream'
-        ? '正在建立流式检测连接，响应内容会实时显示在下方预览区。'
-        : '正在发送请求并解析返回结构，请稍候。'
+        ? (getUiLang() === 'en'
+          ? 'Opening a streaming detection session. Response content will appear live in the preview below.'
+          : '正在建立流式检测连接，响应内容会实时显示在下方预览区。')
+        : (getUiLang() === 'en'
+          ? 'Sending the request and parsing the response structure. Please wait.'
+          : '正在发送请求并解析返回结构，请稍候。')
     });
     dispatchAppEvent('apimaster:detect-status', {
       state: 'running',
-      statusText: '检测中',
+      statusText: getUiLang() === 'en' ? 'Detecting' : '检测中',
       modelId,
       endpoint: extractHostname(apiUrl)
     });
@@ -675,7 +694,7 @@ const ApiDetect = (() => {
         : await requestDetection(payload);
 
       if (!data.ok) {
-        showError(data.error || '检测失败', { modelId, apiUrl, mode, requestType, analysisDepth });
+        showError(data.error || (getUiLang() === 'en' ? 'Detection failed' : '检测失败'), { modelId, apiUrl, mode, requestType, analysisDepth });
         return;
       }
 
@@ -743,13 +762,13 @@ const ApiDetect = (() => {
           appendLivePreview(message.delta || message.text || '');
         } else if (message.type === 'status' && message.summaryCopy) {
           updateResultMeta({
-            statusText: '检测中',
+            statusText: getUiLang() === 'en' ? 'Detecting' : '检测中',
             modelId: payload.modelId,
             apiUrl: payload.apiUrl,
             summaryCopy: message.summaryCopy,
           });
         } else if (message.type === 'error') {
-          throw new Error(message.error || '检测失败');
+          throw new Error(message.error || (getUiLang() === 'en' ? 'Detection failed' : '检测失败'));
         } else if (message.type === 'final') {
           finalData = message.data || null;
         }
@@ -767,7 +786,7 @@ const ApiDetect = (() => {
         if (message.type === 'preview') {
           appendLivePreview(message.delta || message.text || '');
         } else if (message.type === 'error') {
-          throw new Error(message.error || '检测失败');
+          throw new Error(message.error || (getUiLang() === 'en' ? 'Detection failed' : '检测失败'));
         } else if (message.type === 'final') {
           finalData = message.data || null;
         }
@@ -777,7 +796,7 @@ const ApiDetect = (() => {
     }
 
     if (!finalData) {
-      throw new Error('流式检测未返回最终结果');
+      throw new Error(getUiLang() === 'en' ? 'Streaming detection returned no final result.' : '流式检测未返回最终结果');
     }
     return finalData;
   }
@@ -912,7 +931,7 @@ const ApiDetect = (() => {
 
     dispatchAppEvent('apimaster:detect-status', {
       state: 'completed',
-      statusText: `完成 · ${data.score}%`,
+      statusText: getUiLang() === 'en' ? `Completed · ${data.score}%` : `完成 · ${data.score}%`,
       score: data.score,
       modelId: context.modelId,
       endpoint: extractHostname(context.apiUrl)
@@ -933,7 +952,7 @@ const ApiDetect = (() => {
     if (!content || !toggleText) return;
 
     content.classList.toggle('hidden', !visible);
-    toggleText.textContent = visible ? '隐藏响应内容' : '显示响应内容';
+    toggleText.textContent = getToggleResponseLabel(visible);
   }
 
   function appendLivePreview(chunk) {
@@ -970,10 +989,12 @@ const ApiDetect = (() => {
 
   function resetResultMeta() {
     updateResultMeta({
-      statusText: '等待检测',
+      statusText: getUiLang() === 'en' ? 'Waiting' : '等待检测',
       modelId: '--',
       apiUrl: '--',
-      summaryCopy: '系统将根据响应结构、finish_reason、stream / usage、tools、Structured Outputs 与可用画像证据生成综合判断。快速模式下会跳过深度来源分析。'
+      summaryCopy: getUiLang() === 'en'
+        ? 'The system will combine response structure, finish_reason, stream or usage, tools, structured outputs, and available upstream evidence into an overall verdict. Quick mode skips deep source analysis.'
+        : '系统将根据响应结构、finish_reason、stream / usage、tools、Structured Outputs 与可用画像证据生成综合判断。快速模式下会跳过深度来源分析。'
     });
   }
 
@@ -1680,7 +1701,7 @@ const ApiDetect = (() => {
 
   function resetResultUI() {
     document.getElementById('score-text').textContent = '0%';
-    document.getElementById('score-label').textContent = '检测中...';
+    document.getElementById('score-label').textContent = getUiLang() === 'en' ? 'Detecting...' : '检测中...';
     document.getElementById('score-circle').style.strokeDashoffset = '502.65';
     document.getElementById('score-circle').style.stroke = 'var(--accent)';
     document.getElementById('check-list').innerHTML = '';
@@ -1697,28 +1718,28 @@ const ApiDetect = (() => {
       <div class="check-item">
         <div class="check-item-left">
           <span class="check-item-icon fail">${ICON_X}</span>
-          <span class="check-item-name">检测失败</span>
+          <span class="check-item-name">${getUiLang() === 'en' ? 'Detection Failed' : '检测失败'}</span>
         </div>
         <div class="check-item-right">
-          <span class="check-badge fail">${String(msg || '未知错误').slice(0, 120)}</span>
+          <span class="check-badge fail">${String(msg || (getUiLang() === 'en' ? 'Unknown error' : '未知错误')).slice(0, 120)}</span>
         </div>
       </div>
     `;
 
     document.getElementById('metrics').innerHTML = `
       <div class="metric-item">
-        <div class="metric-label">状态</div>
-        <div class="metric-value">失败</div>
+        <div class="metric-label">${getUiLang() === 'en' ? 'Status' : '状态'}</div>
+        <div class="metric-value">${getUiLang() === 'en' ? 'Failed' : '失败'}</div>
       </div>
     `;
-    document.getElementById('score-label').textContent = '检测失败';
+    document.getElementById('score-label').textContent = getUiLang() === 'en' ? 'Detection Failed' : '检测失败';
     document.getElementById('score-text').textContent = '0%';
     document.getElementById('score-circle').style.stroke = 'var(--error)';
     updateResultMeta({
-      statusText: '检测失败',
+      statusText: getUiLang() === 'en' ? 'Failed' : '检测失败',
       modelId: context.modelId || '--',
       apiUrl: context.apiUrl || '--',
-      summaryCopy: `请求失败：${String(msg || '未知错误').slice(0, 140)}`
+      summaryCopy: `${getUiLang() === 'en' ? 'Request failed:' : '请求失败：'} ${String(msg || (getUiLang() === 'en' ? 'Unknown error' : '未知错误')).slice(0, 140)}`
     });
     latestDetectExport = {
       ok: false,
@@ -1731,7 +1752,7 @@ const ApiDetect = (() => {
         requestType: context.requestType || document.getElementById('detect-request-type')?.value || 'nonstream',
         analysisDepth: context.analysisDepth || getAnalysisDepth(),
       },
-      error: String(msg || '未知错误'),
+      error: String(msg || (getUiLang() === 'en' ? 'Unknown error' : '未知错误')),
       data: null,
     };
     updateResultExportButtons();
@@ -1742,7 +1763,7 @@ const ApiDetect = (() => {
     }
     dispatchAppEvent('apimaster:detect-status', {
       state: 'error',
-      statusText: '失败',
+      statusText: getUiLang() === 'en' ? 'Failed' : '失败',
       modelId: context.modelId,
       endpoint: extractHostname(context.apiUrl || ''),
       error: msg
@@ -2289,7 +2310,7 @@ const ApiDetect = (() => {
     btn.addEventListener('click', () => {
       content.classList.toggle('hidden');
       document.getElementById('toggle-response-text').textContent =
-        content.classList.contains('hidden') ? '显示响应内容' : '隐藏响应内容';
+        getToggleResponseLabel(!content.classList.contains('hidden'));
     });
   }
 
@@ -2309,7 +2330,7 @@ const ApiDetect = (() => {
     const history = getHistoryEntries();
 
     if (history.length === 0) {
-      list.innerHTML = '<div class="history-empty">暂无检测记录</div>';
+      list.innerHTML = `<div class="history-empty">${getUiLang() === 'en' ? 'No detection records yet' : '暂无检测记录'}</div>`;
       return;
     }
 
@@ -2327,7 +2348,7 @@ const ApiDetect = (() => {
           <div class="history-endpoint" title="${escapeHtml(h.endpoint)}">${escapeHtml(h.endpoint)}</div>
           <div class="history-score ${sc}">${h.score}%</div>
           <div class="history-status">
-            <span class="status-icon">${h.success ? '✅' : '❌'}</span>
+            <span class="status-icon ${h.success ? 'pass' : 'fail'}" aria-hidden="true">${h.success ? ICON_CHECK : ICON_X}</span>
             <span class="history-status-label">${restorable ? (getUiLang() === 'en' ? 'Restore' : '恢复') : (getUiLang() === 'en' ? 'Legacy' : '旧版')}</span>
           </div>
         </div>
@@ -2358,7 +2379,7 @@ const ApiDetect = (() => {
 
   function setupHistoryClear() {
     document.getElementById('btn-clear-history').addEventListener('click', () => {
-      if (confirm('确定清除所有历史记录？')) {
+      if (confirm(getUiLang() === 'en' ? 'Clear all history records?' : '确定清除所有历史记录？')) {
         saveConfig('history', []);
         activeHistoryEntryId = '';
         renderHistory();

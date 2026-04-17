@@ -643,7 +643,9 @@ const NeedleTest = (() => {
     if (progressFill) progressFill.style.width = '0%';
     if (progressText) progressText.textContent = `0 / ${totalTests}`;
     if (statusEl) {
-      statusEl.textContent = `即将开始，共 ${totalTests} 组测试。当前调用方式：${requestType === 'stream' ? '流式调用' : '非流式调用'}。`;
+      statusEl.textContent = getCurrentLang() === 'en'
+        ? `Starting soon: ${totalTests} cases in total. Current request mode: ${requestType === 'stream' ? 'stream' : 'non-stream'}.`
+        : `即将开始，共 ${totalTests} 组测试。当前调用方式：${requestType === 'stream' ? '流式调用' : '非流式调用'}。`;
     }
     if (resultSummary) {
       resultSummary.textContent = buildRunIntroSummary({ totalTests, model, requestType, contextLengths, depths, mode });
@@ -656,7 +658,7 @@ const NeedleTest = (() => {
 
     dispatchAppEvent('apimaster:needle-status', {
       state: 'running',
-      statusText: `运行中 0/${totalTests}`,
+      statusText: getCurrentLang() === 'en' ? `Running 0/${totalTests}` : `运行中 0/${totalTests}`,
       totalTests,
       completed: 0,
       model,
@@ -672,7 +674,9 @@ const NeedleTest = (() => {
         runtime.currentDepth = depth;
 
         if (statusEl) {
-          statusEl.textContent = `正在测试：上下文 ${ctx} tokens，深度 ${depth}% · ${requestType === 'stream' ? '流式' : '非流式'}调用`;
+          statusEl.textContent = getCurrentLang() === 'en'
+            ? `Running case: context ${ctx} tokens, depth ${depth}% · ${requestType === 'stream' ? 'stream' : 'non-stream'} request`
+            : `正在测试：上下文 ${ctx} tokens，深度 ${depth}% · ${requestType === 'stream' ? '流式' : '非流式'}调用`;
         }
         if (progressText) progressText.textContent = `${runtime.completed} / ${totalTests}`;
         if (progressFill) progressFill.style.width = `${(runtime.completed / totalTests) * 100}%`;
@@ -773,7 +777,7 @@ const NeedleTest = (() => {
 
         dispatchAppEvent('apimaster:needle-status', {
           state: 'running',
-          statusText: `运行中 ${runtime.completed}/${totalTests}`,
+          statusText: getCurrentLang() === 'en' ? `Running ${runtime.completed}/${totalTests}` : `运行中 ${runtime.completed}/${totalTests}`,
           totalTests,
           completed: runtime.completed,
           model,
@@ -787,7 +791,9 @@ const NeedleTest = (() => {
     const successCount = results.filter((item) => item.ok).length;
 
     if (statusEl) {
-      statusEl.textContent = `测试完成！共 ${totalTests} 组，平均检索得分 ${avgScore}%。`;
+      statusEl.textContent = getCurrentLang() === 'en'
+        ? `Test completed. ${totalTests} cases finished, average retrieval score ${avgScore}%.`
+        : `测试完成！共 ${totalTests} 组，平均检索得分 ${avgScore}%。`;
     }
     if (resultSummary) {
       resultSummary.textContent = buildRunCompletionSummary({ avgScore, successCount, totalTests, model, mode });
@@ -799,7 +805,7 @@ const NeedleTest = (() => {
 
     dispatchAppEvent('apimaster:needle-status', {
       state: 'completed',
-      statusText: `完成 · ${avgScore}%`,
+      statusText: getCurrentLang() === 'en' ? `Completed · ${avgScore}%` : `完成 · ${avgScore}%`,
       totalTests,
       completed: totalTests,
       averageScore: avgScore,
@@ -871,7 +877,7 @@ const NeedleTest = (() => {
 
     dispatchAppEvent('apimaster:needle-status', {
       state: 'running',
-      statusText: `运行中 ${runtime.completed}/${runtime.totalTests}`,
+      statusText: getCurrentLang() === 'en' ? `Running ${runtime.completed}/${runtime.totalTests}` : `运行中 ${runtime.completed}/${runtime.totalTests}`,
       totalTests: runtime.totalTests,
       completed: runtime.completed,
       model: runtime.model,
@@ -898,7 +904,7 @@ const NeedleTest = (() => {
 
       dispatchAppEvent('apimaster:needle-status', {
         state: 'paused',
-        statusText: `已暂停 ${runtime.completed}/${runtime.totalTests}`,
+        statusText: getCurrentLang() === 'en' ? `Paused ${runtime.completed}/${runtime.totalTests}` : `已暂停 ${runtime.completed}/${runtime.totalTests}`,
         totalTests: runtime.totalTests,
         completed: runtime.completed,
         model: runtime.model,
@@ -950,7 +956,7 @@ const NeedleTest = (() => {
 
     dispatchAppEvent('apimaster:needle-status', {
       state: 'stopped',
-      statusText: `已停止 ${completed}/${totalTests}`,
+      statusText: getCurrentLang() === 'en' ? `Stopped ${completed}/${totalTests}` : `已停止 ${completed}/${totalTests}`,
       totalTests,
       completed,
       averageScore: avgScore,
@@ -1010,7 +1016,7 @@ const NeedleTest = (() => {
       const x = marginLeft + index * cellW + cellW / 2;
       ctx.fillText(value, x, canvas.height - marginBottom + 20);
     });
-    ctx.fillText('上下文长度 (tokens)', marginLeft + plotWidth / 2, canvas.height - 10);
+    ctx.fillText(getCurrentLang() === 'en' ? 'Context Length (tokens)' : '上下文长度 (tokens)', marginLeft + plotWidth / 2, canvas.height - 10);
 
     ctx.textAlign = 'right';
     uniqueDepths.forEach((value, index) => {
@@ -1022,7 +1028,7 @@ const NeedleTest = (() => {
     ctx.translate(16, marginTop + plotHeight / 2);
     ctx.rotate(-Math.PI / 2);
     ctx.textAlign = 'center';
-    ctx.fillText('插入深度 (%)', 0, 0);
+    ctx.fillText(getCurrentLang() === 'en' ? 'Insertion Depth (%)' : '插入深度 (%)', 0, 0);
     ctx.restore();
   }
 
@@ -1069,7 +1075,7 @@ const NeedleTest = (() => {
 
   function exportHeatmapImage() {
     if (results.length === 0) {
-      alert('请先执行至少一组测试，再导出热力图。');
+      alert(getCurrentLang() === 'en' ? 'Run at least one test case before exporting the heatmap.' : '请先执行至少一组测试，再导出热力图。');
       return;
     }
 
@@ -1084,7 +1090,7 @@ const NeedleTest = (() => {
 
   function exportNeedleCsv() {
     if (results.length === 0) {
-      alert('请先执行至少一组测试，再导出结果。');
+      alert(getCurrentLang() === 'en' ? 'Run at least one test case before exporting the results.' : '请先执行至少一组测试，再导出结果。');
       return;
     }
 

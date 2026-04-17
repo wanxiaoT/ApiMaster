@@ -66,10 +66,11 @@ function scoreClass(score) {
 }
 
 function scoreLabel(score) {
-  if (score >= 85) return '兼容性高';
-  if (score >= 65) return '兼容性良好';
-  if (score >= 45) return '需要复核';
-  return '兼容性较弱';
+  const isEn = typeof AppRuntime !== 'undefined' && AppRuntime.lang === 'en';
+  if (score >= 85) return isEn ? 'Highly Compatible' : '兼容性高';
+  if (score >= 65) return isEn ? 'Good Compatibility' : '兼容性良好';
+  if (score >= 45) return isEn ? 'Needs Review' : '需要复核';
+  return isEn ? 'Weak Compatibility' : '兼容性较弱';
 }
 
 function extractHostname(url) {
